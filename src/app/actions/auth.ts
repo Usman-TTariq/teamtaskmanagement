@@ -6,10 +6,77 @@ import { ensureAuthUser } from "@/lib/team-profiles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
+function isDemoAuthEnabled() {
+  return process.env.DEMO_AUTH_ENABLED === "true";
+}
+
+async function signInWithoutEmail(normalized: string) {
+  const supabase = await createClient();
+  const admin = createAdminClient();
+
+  const { data: allowed } = await supabase
+    .from("allowed_emails")
+    .select("email, name, role")
+    .eq("email", normalized)
+    .maybeSingle();
+
+  if (!allowed) {
+    return {
+      error: "We couldn't find an account for that email. Ask Abdullah to add you.",
+    };
+  }
+
+  const prepared = await ensureAuthUser(
+    normalized,
+    allowed.name,
+    allowed.role,
+  );
+  if (prepared.error) {
+    return { error: prepared.error };
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  const { data: linkData, error: linkError } =
+    await admin.auth.admin.generateLink({
+      type: "magiclink",
+      email: normalized,
+      options: siteUrl
+        ? { redirectTo: `${siteUrl}/auth/callback` }
+        : undefined,
+    });
+
+  if (linkError || !linkData?.properties?.hashed_token) {
+    const message =
+      linkError?.message && linkError.message !== "{}"
+        ? linkError.message
+        : "Could not sign in. Try again in a moment.";
+    return { error: message };
+  }
+
+  const { error: verifyError } = await supabase.auth.verifyOtp({
+    token_hash: linkData.properties.hashed_token,
+    type: "magiclink",
+  });
+
+  if (verifyError) {
+    return { error: verifyError.message };
+  }
+
+  return { success: true as const };
+}
+
 export async function sendMagicLink(email: string) {
   const normalized = email.trim().toLowerCase();
   if (!normalized) {
     return { error: "Email is required" };
+  }
+
+  if (isDemoAuthEnabled()) {
+    const result = await signInWithoutEmail(normalized);
+    if (result.error) {
+      return { error: result.error };
+    }
+    return { success: true, email: normalized, direct: true };
   }
 
   const supabase = await createClient();
@@ -66,55 +133,9 @@ export async function directSignIn(email: string) {
     return { error: "Direct sign-in is only available for the manager account." };
   }
 
-  const supabase = await createClient();
-  const admin = createAdminClient();
-
-  const { data: allowed } = await supabase
-    .from("allowed_emails")
-    .select("email, name, role")
-    .eq("email", normalized)
-    .maybeSingle();
-
-  if (!allowed) {
-    return {
-      error: "We couldn't find an account for that email. Ask Abdullah to add you.",
-    };
-  }
-
-  const prepared = await ensureAuthUser(
-    normalized,
-    allowed.name,
-    allowed.role,
-  );
-  if (prepared.error) {
-    return { error: prepared.error };
-  }
-
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  const { data: linkData, error: linkError } =
-    await admin.auth.admin.generateLink({
-      type: "magiclink",
-      email: normalized,
-      options: siteUrl
-        ? { redirectTo: `${siteUrl}/auth/callback` }
-        : undefined,
-    });
-
-  if (linkError || !linkData?.properties?.hashed_token) {
-    const message =
-      linkError?.message && linkError.message !== "{}"
-        ? linkError.message
-        : "Could not sign in. Try again in a moment.";
-    return { error: message };
-  }
-
-  const { error: verifyError } = await supabase.auth.verifyOtp({
-    token_hash: linkData.properties.hashed_token,
-    type: "magiclink",
-  });
-
-  if (verifyError) {
-    return { error: verifyError.message };
+  const result = await signInWithoutEmail(normalized);
+  if (result.error) {
+    return { error: result.error };
   }
 
   return { success: true };

@@ -67,6 +67,7 @@ export type BoardTask = {
     name: string;
     role: UserRole;
   };
+  hasUnreadResponse?: boolean;
 };
 
 export type AllTask = BoardTask & {
@@ -99,4 +100,13 @@ export type TaskDetail = BoardTask & {
   pendingSubmissionId: string | null;
   comments: TaskComment[];
   submissionCount: number;
+};
+
+export type DashboardStats = {
+  totalTasks: number;
+  addedThisWeek: number;
+  completedCount: number;
+  completedThisWeek: number;
+  overdueCount: number;
+  donePercent: number;
 };

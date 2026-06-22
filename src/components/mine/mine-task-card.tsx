@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Lock } from "lucide-react";
+import { Clock, Lock, MessageCircle } from "lucide-react";
 import { useTaskDetailOptional } from "@/components/tasks/task-detail-context";
 import { formatDeadlineLabel } from "@/lib/deadline-label";
 import { STATUS_META } from "@/lib/constants";
@@ -57,7 +57,13 @@ export function MineTaskCard({ task }: Props) {
             )}
           </div>
 
-          <div className="mt-auto flex flex-wrap gap-1.5 pt-2">
+          <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-2">
+            {task.hasUnreadResponse && (
+              <span className="inline-flex items-center gap-1 border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-900">
+                <MessageCircle size={10} strokeWidth={2.4} />
+                New response
+              </span>
+            )}
             {task.brandName && (
               <span className="border border-[#E4E6EF] bg-[#FAFBFD] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#64748B]">
                 {task.brandName}

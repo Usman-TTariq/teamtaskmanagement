@@ -43,6 +43,9 @@ export function MyTasksView({ profile, tasks }: Props) {
   const underReviewCount = tasks.filter(
     (task) => task.status === "Under Review",
   ).length;
+  const underReviewWithResponse = tasks.filter(
+    (task) => task.status === "Under Review" && task.hasUnreadResponse,
+  ).length;
   const completedCount = tasks.filter((task) => task.status === "Done").length;
 
   const byStatus = useMemo(
@@ -123,7 +126,11 @@ export function MyTasksView({ profile, tasks }: Props) {
           onClick={() => toggleFilter("under-review")}
           label="Under review"
           value={underReviewCount}
-          sub="Waiting for approval"
+          sub={
+            underReviewWithResponse > 0
+              ? `${underReviewWithResponse} new response${underReviewWithResponse > 1 ? "s" : ""}`
+              : "Waiting for approval"
+          }
           grad={STATUS_META["Under Review"].grad}
           glow="rgba(217,119,6,.28)"
           icon={Inbox}

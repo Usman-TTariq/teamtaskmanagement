@@ -10,6 +10,8 @@ type Props = {
 };
 
 export function ReviewQueue({ tasks }: Props) {
+  const withResponse = tasks.filter((t) => t.hasUnreadResponse).length;
+
   return (
     <section className="border border-[#E4E6EF] bg-white">
       <div className="flex items-center justify-between gap-3 border-b border-[#E4E6EF] px-5 py-4">
@@ -18,7 +20,9 @@ export function ReviewQueue({ tasks }: Props) {
             Pending review
           </h3>
           <p className="mt-1 text-[11px] font-medium text-[#9495A3]">
-            Normal tasks go to Team Lead · Confidential tasks go to Manager
+            {withResponse > 0
+              ? `${withResponse} task${withResponse > 1 ? "s have" : " has"} new comments`
+              : "Normal tasks go to Team Lead · Confidential tasks go to Manager"}
           </p>
         </div>
         <span className="border border-[#E4E6EF] bg-[#FAFBFD] px-2 py-1 text-[10px] font-extrabold uppercase tracking-wide text-[#14141A]">

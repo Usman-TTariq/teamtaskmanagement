@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTeamProfiles } from "@/lib/team-profiles";
 import { canAssign } from "@/lib/permissions";
-import type { Brand, AllTask, BoardTask, Profile, TaskComment, TaskDetail, TeamMemberWorkload } from "@/lib/types";
+import type { Brand, AllTask, BoardTask, DashboardStats, Profile, TaskComment, TaskDetail, TeamMemberWorkload } from "@/lib/types";
 
 function brandNameFromJoin(brand: unknown): string | null {
   if (!brand) return null;
@@ -241,22 +241,32 @@ export async function getMyTasks(): Promise<BoardTask[]> {
   const profile = await requireProfile();
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("tasks")
-    .select(
-      "id, title, status, category, priority, deadline, hidden, pinned, brand:brands(name), assignee:profiles!tasks_assignee_id_fkey(id, name, role)",
-    )
-    .eq("assignee_id", profile.id)
-    .order("created_at", { ascending: false });
+  const [{ data, error }, unreadTaskIds] = await Promise.all([
+    supabase
+      .from("tasks")
+      .select(
+        "id, title, status, category, priority, deadline, hidden, pinned, brand:brands(name), assignee:profiles!tasks_assignee_id_fkey(id, name, role)",
+      )
+      .eq("assignee_id", profile.id)
+      .order("created_at", { ascending: false }),
+    fetchUnreadTaskIds(supabase, profile.id),
+  ]);
 
   if (error) {
     console.error("getMyTasks:", error.message);
     return [];
   }
 
-  return (data ?? [])
-    .map((row) => mapBoardTask(row))
-    .filter((task): task is BoardTask => task != null);
+  const tasks: BoardTask[] = [];
+  for (const row of data ?? []) {
+    const task = mapBoardTask(row);
+    if (!task) continue;
+    tasks.push({
+      ...task,
+      hasUnreadResponse: unreadTaskIds.has(task.id),
+    });
+  }
+  return tasks;
 }
 
 export async function getBoardTasks(): Promise<BoardTask[]> {
@@ -337,13 +347,31 @@ async function resolveReviewer(
   return { reviewer: data };
 }
 
+async function fetchUnreadTaskIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  profileId: string,
+) {
+  const { data } = await supabase
+    .from("notifications")
+    .select("task_id")
+    .eq("recipient_id", profileId)
+    .eq("read", false)
+    .not("task_id", "is", null);
+
+  return new Set(
+    (data ?? [])
+      .map((row) => row.task_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+}
+
 async function notifyUser(
   recipientId: string,
   taskId: string,
   message: string,
 ) {
-  const supabase = await createClient();
-  await supabase.from("notifications").insert({
+  const admin = createAdminClient();
+  await admin.from("notifications").insert({
     recipient_id: recipientId,
     task_id: taskId,
     message,
@@ -585,27 +613,97 @@ export async function submitTaskForReview(taskId: string) {
   return { success: true };
 }
 
-export async function getReviewQueue(): Promise<BoardTask[]> {
-  const profile = await requireLead();
+export async function getDashboardStats(): Promise<DashboardStats> {
+  await requireLead();
   const supabase = await createClient();
 
   const { data, error } = await supabase
     .from("tasks")
-    .select(
-      "id, title, status, category, priority, deadline, hidden, pinned, brand:brands(name), assignee:profiles!tasks_assignee_id_fkey(id, name, role)",
-    )
-    .eq("status", "Under Review")
-    .eq("reviewer_id", profile.id)
-    .order("updated_at", { ascending: false });
+    .select("status, deadline, created_at, completed_at");
+
+  if (error) {
+    console.error("getDashboardStats:", error.message);
+    return {
+      totalTasks: 0,
+      addedThisWeek: 0,
+      completedCount: 0,
+      completedThisWeek: 0,
+      overdueCount: 0,
+      donePercent: 0,
+    };
+  }
+
+  const weekAgo = new Date();
+  weekAgo.setDate(weekAgo.getDate() - 7);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let addedThisWeek = 0;
+  let completedCount = 0;
+  let completedThisWeek = 0;
+  let overdueCount = 0;
+
+  for (const row of data ?? []) {
+    const createdAt = new Date(row.created_at);
+    if (createdAt >= weekAgo) addedThisWeek += 1;
+
+    if (row.status === "Done") {
+      completedCount += 1;
+      if (row.completed_at && new Date(row.completed_at) >= weekAgo) {
+        completedThisWeek += 1;
+      }
+    } else if (row.deadline) {
+      const due = new Date(`${row.deadline}T00:00:00`);
+      if (due < today) overdueCount += 1;
+    }
+  }
+
+  const totalTasks = data?.length ?? 0;
+  const donePercent =
+    totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
+
+  return {
+    totalTasks,
+    addedThisWeek,
+    completedCount,
+    completedThisWeek,
+    overdueCount,
+    donePercent,
+  };
+}
+
+export async function getReviewQueue(): Promise<BoardTask[]> {
+  const profile = await requireLead();
+  const supabase = await createClient();
+
+  const [{ data, error }, unreadTaskIds] = await Promise.all([
+    supabase
+      .from("tasks")
+      .select(
+        "id, title, status, category, priority, deadline, hidden, pinned, brand:brands(name), assignee:profiles!tasks_assignee_id_fkey(id, name, role)",
+      )
+      .eq("status", "Under Review")
+      .eq("reviewer_id", profile.id)
+      .order("updated_at", { ascending: false }),
+    fetchUnreadTaskIds(supabase, profile.id),
+  ]);
 
   if (error) {
     console.error("getReviewQueue:", error.message);
     return [];
   }
 
-  return (data ?? [])
-    .map((row) => mapBoardTask(row))
-    .filter((task): task is BoardTask => task != null);
+  const tasks: BoardTask[] = [];
+  for (const row of data ?? []) {
+    const task = mapBoardTask(row);
+    if (!task) continue;
+    tasks.push({
+      ...task,
+      hasUnreadResponse: unreadTaskIds.has(task.id),
+    });
+  }
+  return tasks;
 }
 
 async function assertReviewer(
@@ -783,15 +881,73 @@ export async function addTaskComment(taskId: string, body: string) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("task_comments").insert({
-    task_id: taskId,
-    author_id: profile.id,
-    body: text,
-  });
+
+  const { data: task } = await supabase
+    .from("tasks")
+    .select("id, title, assignee_id, reviewer_id, status")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (!task) {
+    return { error: "Task not found." };
+  }
+
+  const { data: inserted, error } = await supabase
+    .from("task_comments")
+    .insert({
+      task_id: taskId,
+      author_id: profile.id,
+      body: text,
+    })
+    .select(
+      `
+      id, body, created_at,
+      author:profiles(id, name, role)
+    `,
+    )
+    .single();
 
   if (error) {
     return { error: error.message };
   }
+
+  const mapped = mapComment(inserted);
+  if (!mapped) {
+    return { error: "Comment saved but could not be loaded." };
+  }
+
+  if (task.assignee_id !== profile.id) {
+    await notifyUser(
+      task.assignee_id,
+      taskId,
+      `${profile.name} commented on "${task.title}"`,
+    );
+  } else if (
+    task.status === "Under Review" &&
+    task.reviewer_id &&
+    task.reviewer_id !== profile.id
+  ) {
+    await notifyUser(
+      task.reviewer_id,
+      taskId,
+      `${profile.name} commented on "${task.title}" under review`,
+    );
+  }
+
+  revalidateTaskPaths();
+  return { success: true, comment: mapped };
+}
+
+export async function markTaskNotificationsRead(taskId: string) {
+  const profile = await requireProfile();
+  const supabase = await createClient();
+
+  await supabase
+    .from("notifications")
+    .update({ read: true })
+    .eq("recipient_id", profile.id)
+    .eq("task_id", taskId)
+    .eq("read", false);
 
   revalidateTaskPaths();
   return { success: true };

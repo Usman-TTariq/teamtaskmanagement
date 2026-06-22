@@ -25,9 +25,10 @@ const ROLE_ICONS: Record<UserRole, typeof Crown> = {
 
 type Props = {
   allowedEmails: AllowedEmail[];
+  demoAuthEnabled?: boolean;
 };
 
-export function LockScreen({ allowedEmails }: Props) {
+export function LockScreen({ allowedEmails, demoAuthEnabled = false }: Props) {
   const router = useRouter();
   const [step, setStep] = useState<"email" | "sent">("email");
   const [email, setEmail] = useState("");
@@ -36,13 +37,14 @@ export function LockScreen({ allowedEmails }: Props) {
   const [pending, startTransition] = useTransition();
 
   const isDirectSignIn = email.trim().toLowerCase() === DIRECT_SIGN_IN_EMAIL;
+  const instantSignIn = demoAuthEnabled || isDirectSignIn;
 
   function handleChipClick(personEmail: string) {
     const value = personEmail.trim().toLowerCase();
     setEmail(value);
     setError("");
 
-    if (value === DIRECT_SIGN_IN_EMAIL) {
+    if (demoAuthEnabled || value === DIRECT_SIGN_IN_EMAIL) {
       handleSignIn(value);
     }
   }
@@ -56,8 +58,10 @@ export function LockScreen({ allowedEmails }: Props) {
     setEmail(value);
     setError("");
     startTransition(async () => {
-      if (value === DIRECT_SIGN_IN_EMAIL) {
-        const result = await directSignIn(value);
+      if (demoAuthEnabled || value === DIRECT_SIGN_IN_EMAIL) {
+        const result = demoAuthEnabled
+          ? await sendMagicLink(value)
+          : await directSignIn(value);
         if (result.error) {
           setError(result.error);
           return;
@@ -96,7 +100,9 @@ export function LockScreen({ allowedEmails }: Props) {
         {step === "email" ? (
           <>
             <p className="mb-5 text-center text-sm text-[#8A8B99]">
-              Sign in with your work Outlook email
+              {demoAuthEnabled
+                ? "Dev mode — tap your email to sign in instantly"
+                : "Sign in with your work Outlook email"}
             </p>
             <div className="rounded-2xl bg-white p-5 shadow-2xl">
               <label className="mb-1.5 block text-xs font-bold text-[#6B6C7A]">
@@ -126,10 +132,10 @@ export function LockScreen({ allowedEmails }: Props) {
                 className="w-full rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/30 disabled:opacity-60"
               >
                 {pending
-                  ? isDirectSignIn
+                  ? instantSignIn
                     ? "Signing in…"
                     : "Sending…"
-                  : isDirectSignIn
+                  : instantSignIn
                     ? "Sign in"
                     : "Send sign-in link"}
               </button>
@@ -137,7 +143,9 @@ export function LockScreen({ allowedEmails }: Props) {
               {allowedEmails.length > 0 && (
                 <div className="mt-4 border-t border-[#E4E6EF] pt-3">
                   <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[#9495A3]">
-                    Team emails (Abdullah signs in directly; others tap to fill)
+                    {demoAuthEnabled
+                      ? "Team emails — tap to sign in"
+                      : "Team emails (Abdullah signs in directly; others tap to fill)"}
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {allowedEmails.map((person) => {

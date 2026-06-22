@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
   ChevronRight,
-  Clock,
-  Flag,
-  Mic,
-  Paperclip,
+  Lock,
+  MessageSquare,
   Pin,
   Send,
   X,
@@ -17,6 +15,7 @@ import {
   addTaskComment,
   approveTask,
   getTaskDetail,
+  markTaskNotificationsRead,
   requestTaskChanges,
   submitTaskForReview,
   toggleTaskPinned,
@@ -34,7 +33,7 @@ import {
   type TaskStatus,
 } from "@/lib/constants";
 import { canAssign } from "@/lib/permissions";
-import type { Profile, TaskDetail } from "@/lib/types";
+import type { Profile, TaskComment, TaskDetail } from "@/lib/types";
 
 type Props = {
   taskId: string;
@@ -44,6 +43,7 @@ type Props = {
 
 export function TaskDetailModal({ taskId, profile, onClose }: Props) {
   const router = useRouter();
+  const commentsEndRef = useRef<HTMLDivElement>(null);
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [error, setError] = useState("");
   const [comment, setComment] = useState("");
@@ -66,21 +66,28 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
     return options;
   }, [isLead, task]);
 
-  async function loadTask() {
-    setLoading(true);
-    setError("");
+  async function fetchTask(silent = false) {
+    if (!silent) setLoading(true);
     const result = await getTaskDetail(taskId);
     if (result.error || !result.task) {
-      setError(result.error ?? "Could not load task.");
-      setTask(null);
+      if (!silent) {
+        setError(result.error ?? "Could not load task.");
+        setTask(null);
+      }
     } else {
       setTask(result.task);
+      setError("");
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
+    return result.task ?? null;
   }
 
   useEffect(() => {
-    loadTask();
+    void (async () => {
+      await fetchTask(false);
+      await markTaskNotificationsRead(taskId);
+      router.refresh();
+    })();
   }, [taskId]);
 
   useEffect(() => {
@@ -99,8 +106,33 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
         return;
       }
       setError("");
-      await loadTask();
+      await fetchTask(true);
       router.refresh();
+    });
+  }
+
+  function handleCommentSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const text = comment.trim();
+    if (!text || !task) return;
+
+    startTransition(async () => {
+      const result = await addTaskComment(taskId, text);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      if (result.comment) {
+        setTask({
+          ...task,
+          comments: [...task.comments, result.comment as TaskComment],
+        });
+        setComment("");
+        setError("");
+        requestAnimationFrame(() => {
+          commentsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        });
+      }
     });
   }
 
@@ -111,15 +143,15 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
     : 0;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-8">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden />
-      <div className="relative my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+      <div className="relative flex max-h-[min(92vh,820px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         {loading ? (
-          <div className="px-6 py-16 text-center text-sm font-semibold text-[#6B6C7A]">
+          <div className="px-6 py-20 text-center text-sm font-semibold text-[#6B6C7A]">
             Loading task…
           </div>
         ) : !task ? (
-          <div className="px-6 py-16 text-center">
+          <div className="px-6 py-20 text-center">
             <p className="text-sm font-semibold text-[#E11D2A]">
               {error || "Task not found."}
             </p>
@@ -133,161 +165,111 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
           </div>
         ) : (
           <>
-            <div className="border-b border-[#E4E6EF] px-6 py-5">
-              <div className="flex items-start justify-between gap-4">
+            {/* Header */}
+            <div className="shrink-0 border-b border-[#E4E6EF] px-5 py-4">
+              <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-xl font-extrabold text-[#14141A]">
-                    {task.title}
-                  </h2>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-lg font-extrabold text-[#14141A]">
+                      {task.title}
+                    </h2>
+                    {task.hidden && (
+                      <Lock size={14} className="text-[#7C3AED]" strokeWidth={2.4} />
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <span
-                      className="rounded-md px-2 py-0.5 text-[11px] font-extrabold text-white"
+                      className="rounded-md px-2 py-0.5 text-[10px] font-extrabold text-white"
                       style={{ background: STATUS_META[task.status].grad }}
                     >
                       {task.status}
                     </span>
                     {task.brandName && (
-                      <span className="rounded-md bg-[#EEF1F6] px-2 py-0.5 text-[11px] font-bold text-[#64748B]">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-[#64748B]">
                         {task.brandName}
                       </span>
                     )}
-                    <span className="text-[11px] font-bold text-[#14141A]">
+                    <span className="text-[10px] font-bold text-[#9495A3]">·</span>
+                    <span className="text-[10px] font-bold text-[#6B6C7A]">
                       {task.category}
                     </span>
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#6B6C7A]">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#6B6C7A]">
                       <span
                         className="h-1.5 w-1.5 rounded-full"
-                        style={{
-                          background: PRIORITY_META[task.priority].dot,
-                        }}
+                        style={{ background: PRIORITY_META[task.priority].dot }}
                       />
                       {task.priority}
                     </span>
+                    {formatDeadlineHeader(task.deadline, task.status) && (
+                      <>
+                        <span className="text-[10px] font-bold text-[#9495A3]">·</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#6B6C7A]">
+                          <Calendar size={11} />
+                          {formatDeadlineHeader(task.deadline, task.status)}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-lg p-1.5 text-[#9495A3] transition hover:bg-[#F4F5FA]"
-                  >
-                    <X size={18} />
-                  </button>
-                  {formatDeadlineHeader(task.deadline, task.status) && (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#6B6C7A]">
-                      <Calendar size={13} />
-                      {formatDeadlineHeader(task.deadline, task.status)}
-                    </span>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="shrink-0 rounded-lg p-1.5 text-[#9495A3] transition hover:bg-[#F4F5FA]"
+                >
+                  <X size={18} />
+                </button>
               </div>
 
-              <div className="mt-5 flex items-center justify-between gap-2">
+              {/* Compact stepper */}
+              <div className="mt-3 flex items-center gap-1">
                 {WORKFLOW_STATUSES.map((step, index) => {
                   const active = index === stepIndex;
                   const done = index < stepIndex;
                   return (
                     <div key={step} className="flex min-w-0 flex-1 items-center">
-                      <div className="flex min-w-0 flex-col items-center gap-1.5">
-                        <span
-                          className="grid h-4 w-4 place-items-center rounded-full border-2"
-                          style={{
-                            borderColor: active || done ? "#E11D2A" : "#D8DBE8",
-                            background: active ? "#E11D2A" : "white",
-                            boxShadow: active
-                              ? "0 0 0 3px rgba(225,29,42,.15)"
-                              : undefined,
-                          }}
-                        >
-                          {done && (
-                            <span className="h-1.5 w-1.5 rounded-full bg-[#E11D2A]" />
-                          )}
-                        </span>
-                        <span
-                          className={`truncate text-[10px] font-bold ${active ? "text-[#E11D2A]" : "text-[#9495A3]"}`}
-                        >
-                          {step}
-                        </span>
-                      </div>
-                      {index < WORKFLOW_STATUSES.length - 1 && (
-                        <div className="mx-1 mb-4 h-px flex-1 bg-[#E4E6EF]" />
-                      )}
+                      <div
+                        className={`h-1 flex-1 rounded-full ${done || active ? "bg-[#E11D2A]" : "bg-[#E4E6EF]"}`}
+                      />
                     </div>
                   );
                 })}
               </div>
+              <div className="mt-1 flex justify-between text-[9px] font-bold uppercase tracking-wide text-[#9495A3]">
+                {WORKFLOW_STATUSES.map((step, index) => (
+                  <span
+                    key={step}
+                    className={index === stepIndex ? "text-[#E11D2A]" : undefined}
+                  >
+                    {step.split(" ")[0]}
+                  </span>
+                ))}
+              </div>
             </div>
 
-            <div className="space-y-5 px-6 py-5">
-              {isReviewer && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-extrabold text-amber-900">
+            {/* Review banner */}
+            {isReviewer && (
+              <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-extrabold text-amber-900">
                       Awaiting your review
+                      {task.hidden && (
+                        <span className="ml-2 rounded bg-[#14141A] px-1.5 py-0.5 text-[9px] font-extrabold text-white">
+                          Confidential
+                        </span>
+                      )}
                     </p>
-                    {task.hidden && (
-                      <span className="rounded-md bg-[#14141A] px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-white">
-                        Confidential
-                      </span>
-                    )}
+                    <p className="text-[11px] text-amber-800/80">
+                      Submitted by {task.assignee.name}
+                    </p>
                   </div>
-                  <p className="mt-1 text-xs font-medium text-amber-800/80">
-                    Submitted by {task.assignee.name}. Approve to mark done or
-                    request changes to send it back.
-                  </p>
-
-                  {showChangeForm ? (
-                    <div className="mt-4 space-y-3">
-                      <textarea
-                        value={changeComment}
-                        onChange={(e) => setChangeComment(e.target.value)}
-                        placeholder="Describe what needs to change…"
-                        rows={3}
-                        className="w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={pending || !changeComment.trim()}
-                          onClick={() =>
-                            refreshAfterAction(async () => {
-                              const result = await requestTaskChanges(
-                                taskId,
-                                changeComment,
-                              );
-                              if (!result.error) {
-                                setChangeComment("");
-                                setShowChangeForm(false);
-                              }
-                              return result;
-                            })
-                          }
-                          className="inline-flex items-center gap-2 rounded-xl bg-[#14141A] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#26262F] disabled:opacity-60"
-                        >
-                          Send feedback
-                        </button>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => {
-                            setShowChangeForm(false);
-                            setChangeComment("");
-                          }}
-                          className="rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-bold text-amber-900 transition hover:bg-amber-100 disabled:opacity-60"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-4 flex flex-wrap gap-2">
+                  {!showChangeForm && (
+                    <div className="flex gap-2">
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() =>
-                          refreshAfterAction(() => approveTask(taskId))
-                        }
-                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:brightness-105 disabled:opacity-60"
+                        onClick={() => refreshAfterAction(() => approveTask(taskId))}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
                       >
                         Approve
                       </button>
@@ -295,48 +277,81 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                         type="button"
                         disabled={pending}
                         onClick={() => setShowChangeForm(true)}
-                        className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-900 transition hover:bg-amber-100 disabled:opacity-60"
+                        className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-900 disabled:opacity-60"
                       >
                         Request changes
                       </button>
                     </div>
                   )}
                 </div>
-              )}
-
-              {task.status === "Under Review" && isAssignee && !isReviewer && (
-                <div className="rounded-xl border border-[#E4E6EF] bg-[#FAFBFD] px-4 py-3 text-sm font-semibold text-[#6B6C7A]">
-                  Submitted for review
-                  {task.reviewer
-                    ? ` — waiting on ${task.reviewer.name}`
-                    : ""}
-                  .
-                </div>
-              )}
-
-              <div className="flex items-center gap-3 rounded-xl border border-[#E4E6EF] bg-[#FAFBFD] p-3">
-                <Avatar
-                  name={task.assignee.name}
-                  role={task.assignee.role}
-                  size={40}
-                />
-                <div>
-                  <p className="text-sm font-extrabold text-[#14141A]">
-                    {task.assignee.name}
-                  </p>
-                  <span
-                    className="mt-0.5 inline-flex rounded-md px-2 py-0.5 text-[10px] font-extrabold"
-                    style={{
-                      color: ROLE_META[task.assignee.role].color,
-                      background: `${ROLE_META[task.assignee.role].color}18`,
-                    }}
-                  >
-                    {task.assignee.role}
-                  </span>
-                </div>
+                {showChangeForm && (
+                  <div className="mt-3 space-y-2">
+                    <textarea
+                      value={changeComment}
+                      onChange={(e) => setChangeComment(e.target.value)}
+                      placeholder="What needs to change?"
+                      rows={2}
+                      className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm outline-none focus:border-amber-400"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={pending || !changeComment.trim()}
+                        onClick={() =>
+                          refreshAfterAction(async () => {
+                            const result = await requestTaskChanges(
+                              taskId,
+                              changeComment,
+                            );
+                            if (!result.error) {
+                              setChangeComment("");
+                              setShowChangeForm(false);
+                            }
+                            return result;
+                          })
+                        }
+                        className="rounded-lg bg-[#14141A] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                      >
+                        Send feedback
+                      </button>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => {
+                          setShowChangeForm(false);
+                          setChangeComment("");
+                        }}
+                        className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-bold text-amber-900"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
+            )}
 
-              <div className="flex flex-wrap items-center gap-2">
+            {task.status === "Under Review" && isAssignee && !isReviewer && (
+              <div className="shrink-0 border-b border-[#E4E6EF] bg-[#FAFBFD] px-5 py-2.5 text-xs font-semibold text-[#6B6C7A]">
+                Waiting on {task.reviewer?.name ?? "reviewer"} for approval
+              </div>
+            )}
+
+            {/* Toolbar */}
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#E4E6EF] px-5 py-3">
+              <Avatar name={task.assignee.name} role={task.assignee.role} size={32} />
+              <div className="min-w-0">
+                <p className="truncate text-xs font-extrabold text-[#14141A]">
+                  {task.assignee.name}
+                </p>
+                <p
+                  className="text-[10px] font-bold"
+                  style={{ color: ROLE_META[task.assignee.role].color }}
+                >
+                  {task.assignee.role}
+                </p>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
                 <select
                   value={task.status}
                   disabled={pending || isReviewer || (!isAssignee && !isLead)}
@@ -345,7 +360,7 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                       updateTaskStatus(taskId, e.target.value as TaskStatus),
                     )
                   }
-                  className="rounded-xl border border-[#E4E6EF] bg-white px-3 py-2 text-sm font-bold text-[#14141A] outline-none disabled:opacity-60"
+                  className="rounded-lg border border-[#E4E6EF] bg-white px-2.5 py-1.5 text-xs font-bold text-[#14141A] outline-none disabled:opacity-60"
                 >
                   {statusOptions.map((status) => (
                     <option key={status} value={status}>
@@ -353,23 +368,19 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                     </option>
                   ))}
                 </select>
-
                 <button
                   type="button"
                   disabled={pending || (!isAssignee && !isLead)}
-                  onClick={() =>
-                    refreshAfterAction(() => toggleTaskPinned(taskId))
-                  }
-                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition disabled:opacity-60 ${
+                  onClick={() => refreshAfterAction(() => toggleTaskPinned(taskId))}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition disabled:opacity-60 ${
                     task.pinned
                       ? "border-[#E11D2A] bg-[#FDE7EA] text-[#E11D2A]"
                       : "border-[#E4E6EF] bg-white text-[#14141A]"
                   }`}
                 >
-                  <Pin size={15} />
-                  Pin for today
+                  <Pin size={13} />
+                  Pin
                 </button>
-
                 {isAssignee &&
                   task.status !== "Under Review" &&
                   task.status !== "Done" && (
@@ -379,108 +390,90 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                       onClick={() =>
                         refreshAfterAction(() => submitTaskForReview(taskId))
                       }
-                      className="ml-auto inline-flex items-center gap-2 rounded-xl bg-[#14141A] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#26262F] disabled:opacity-60"
+                      className="inline-flex items-center gap-1 rounded-lg bg-[#14141A] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
                     >
-                      Submit for review
-                      <ChevronRight size={15} />
+                      Submit
+                      <ChevronRight size={13} />
                     </button>
                   )}
               </div>
+            </div>
 
-              {task.description && (
-                <Section icon={Paperclip} title="Brief">
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-[#6B6C7A]">
-                    {task.description}
-                  </p>
-                </Section>
-              )}
-
-              <Section
-                icon={Paperclip}
-                title="Brief & reference files"
-                count={0}
-              >
-                <p className="text-sm text-[#9495A3]">None.</p>
-              </Section>
-
-              <Section icon={Clock} title="Submissions" count={task.submissionCount}>
-                {task.submissionCount === 0 ? (
-                  <p className="text-sm text-[#9495A3]">
-                    No work submitted yet.
-                  </p>
-                ) : (
-                  <p className="text-sm font-semibold text-[#6B6C7A]">
-                    {task.submissionCount} submission
-                    {task.submissionCount === 1 ? "" : "s"} on file.
-                  </p>
-                )}
-              </Section>
-
-              <Section icon={Mic} title="Voice messages" count={0}>
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex items-center gap-2 rounded-xl border border-dashed border-[#D8DBE8] px-3 py-2 text-sm font-semibold text-[#9495A3]"
-                >
-                  <Mic size={15} />
-                  Record voice
-                </button>
-              </Section>
-
-              <Section icon={Flag} title="Comments" count={task.comments.length}>
-                {task.comments.length === 0 ? (
-                  <p className="mb-3 text-sm text-[#9495A3]">No comments yet.</p>
-                ) : (
-                  <div className="mb-3 space-y-3">
-                    {task.comments.map((item) => (
-                      <div
-                        key={item.id}
-                        className="rounded-xl border border-[#EEF1F6] bg-[#FAFBFD] p-3"
-                      >
-                        <div className="mb-1 flex items-center gap-2">
-                          <span className="text-xs font-extrabold text-[#14141A]">
-                            {item.author.name}
-                          </span>
-                          <span className="text-[10px] text-[#9495A3]">
-                            {new Date(item.created_at).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-sm text-[#6B6C7A]">{item.body}</p>
-                      </div>
-                    ))}
+            {/* Body — two columns */}
+            <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1fr_1.1fr]">
+              <div className="min-h-0 overflow-y-auto border-b border-[#E4E6EF] px-5 py-4 lg:border-b-0 lg:border-r">
+                {task.description ? (
+                  <div>
+                    <h3 className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#9495A3]">
+                      Brief
+                    </h3>
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-[#6B6C7A]">
+                      {task.description}
+                    </p>
                   </div>
+                ) : (
+                  <p className="text-sm text-[#9495A3]">No brief provided.</p>
                 )}
+                {task.submissionCount > 0 && (
+                  <p className="mt-4 text-xs font-semibold text-[#9495A3]">
+                    {task.submissionCount} submission
+                    {task.submissionCount === 1 ? "" : "s"} on file
+                  </p>
+                )}
+              </div>
+
+              <div className="flex min-h-0 flex-col">
+                <div className="flex items-center gap-2 border-b border-[#E4E6EF] px-5 py-2.5">
+                  <MessageSquare size={14} className="text-[#E11D2A]" />
+                  <h3 className="text-xs font-extrabold text-[#14141A]">
+                    Comments
+                  </h3>
+                  <span className="text-xs font-bold text-[#9495A3]">
+                    ({task.comments.length})
+                  </span>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+                  {task.comments.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-[#9495A3]">
+                      No comments yet. Start the conversation below.
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {task.comments.map((item) => (
+                        <CommentBubble key={item.id} item={item} />
+                      ))}
+                      <div ref={commentsEndRef} />
+                    </div>
+                  )}
+                </div>
 
                 <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    refreshAfterAction(async () => {
-                      const result = await addTaskComment(taskId, comment);
-                      if (!result.error) setComment("");
-                      return result;
-                    });
-                  }}
-                  className="flex gap-2"
+                  onSubmit={handleCommentSubmit}
+                  className="shrink-0 border-t border-[#E4E6EF] bg-[#FAFBFD] px-4 py-3"
                 >
-                  <input
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    placeholder="Write a comment"
-                    className="min-w-0 flex-1 rounded-xl border border-[#E4E6EF] px-3 py-2.5 text-sm outline-none focus:border-[#E11D2A]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={pending || !comment.trim()}
-                    className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] text-white disabled:opacity-60"
-                  >
-                    <Send size={16} />
-                  </button>
+                  <div className="flex gap-2">
+                    <input
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value)}
+                      placeholder="Write a comment…"
+                      className="min-w-0 flex-1 rounded-xl border border-[#E4E6EF] bg-white px-3 py-2 text-sm outline-none focus:border-[#E11D2A]"
+                    />
+                    <button
+                      type="submit"
+                      disabled={pending || !comment.trim()}
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] text-white disabled:opacity-60"
+                    >
+                      <Send size={15} />
+                    </button>
+                  </div>
+                  {error && (
+                    <p className="mt-2 text-xs font-medium text-[#E11D2A]">
+                      {error}
+                    </p>
+                  )}
                 </form>
-              </Section>
-
-              {error && (
-                <p className="text-sm font-medium text-[#E11D2A]">{error}</p>
-              )}
+              </div>
             </div>
           </>
         )}
@@ -489,29 +482,46 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
   );
 }
 
-function Section({
-  icon: Icon,
-  title,
-  count,
-  children,
-}: {
-  icon: typeof Paperclip;
-  title: string;
-  count?: number;
-  children: React.ReactNode;
-}) {
+function CommentBubble({ item }: { item: TaskComment }) {
+  const isLead = canAssign(item.author.role);
   return (
-    <section>
-      <div className="mb-2 flex items-center gap-2">
-        <Icon size={15} className="text-[#E11D2A]" strokeWidth={2.3} />
-        <h3 className="text-sm font-extrabold text-[#14141A]">
-          {title}
-          {count != null && (
-            <span className="font-bold text-[#9495A3]"> ({count})</span>
-          )}
-        </h3>
+    <div
+      className={`rounded-xl px-3 py-2.5 ${
+        isLead
+          ? "border border-amber-100 bg-amber-50/60"
+          : "border border-[#EEF1F6] bg-white"
+      }`}
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <span className="text-xs font-extrabold text-[#14141A]">
+          {item.author.name}
+        </span>
+        <span
+          className="rounded px-1.5 py-0.5 text-[9px] font-extrabold"
+          style={{
+            color: ROLE_META[item.author.role].color,
+            background: `${ROLE_META[item.author.role].color}18`,
+          }}
+        >
+          {item.author.role}
+        </span>
+        <span className="ml-auto text-[10px] text-[#9495A3]">
+          {formatCommentTime(item.created_at)}
+        </span>
       </div>
-      {children}
-    </section>
+      <p className="text-sm leading-relaxed text-[#6B6C7A]">{item.body}</p>
+    </div>
   );
+}
+
+function formatCommentTime(iso: string) {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
