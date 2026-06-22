@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { signOut } from "@/app/actions/auth";
 import { useTaskModalOptional } from "@/components/tasks/task-modal-context";
+import { BrandLogo, BrandMark } from "@/components/ui/brand-logo";
 import { Avatar } from "@/components/ui/avatar";
 import { VIEW_SUBTITLES } from "@/lib/constants";
 import { canAssign, navItemsForRole } from "@/lib/permissions";
@@ -97,16 +98,12 @@ export function AppShell({
     <div className="flex h-screen w-full overflow-hidden bg-[#EFF1F8]">
       <aside className="flex w-[240px] shrink-0 flex-col bg-gradient-to-b from-[#101019] to-[#09090E] px-3 py-5 text-white">
         <div className="mb-6 px-1">
-          <div className="inline-flex rounded-xl bg-white px-3 py-2 shadow-lg">
-            <div>
-              <div className="text-sm font-extrabold tracking-tight text-[#14141A]">
-                TGT Nexus
-              </div>
-              <div className="text-[10px] font-semibold text-[#6B6C7A]">
-                Team Tasks
-              </div>
-            </div>
-          </div>
+          <BrandLogo
+            size="md"
+            layout="horizontal"
+            tagline="Team Tasks"
+            textClassName="text-white"
+          />
         </div>
 
         <nav className="flex flex-col gap-1">
@@ -155,13 +152,16 @@ export function AppShell({
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="shrink-0 border-b border-[#E4E6EF] bg-white px-8 py-5">
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-extrabold tracking-tight text-[#14141A]">
-                {activeLabel}
-              </h1>
-              {subtitle && (
-                <p className="mt-1 text-sm text-[#6B6C7A]">{subtitle}</p>
-              )}
+            <div className="flex items-start gap-3">
+              <BrandMark size={36} className="mt-0.5 hidden sm:block" />
+              <div>
+                <h1 className="text-2xl font-extrabold tracking-tight text-[#14141A]">
+                  {activeLabel}
+                </h1>
+                {subtitle && (
+                  <p className="mt-1 text-sm text-[#6B6C7A]">{subtitle}</p>
+                )}
+              </div>
             </div>
             <HeaderActions
               profile={profile}

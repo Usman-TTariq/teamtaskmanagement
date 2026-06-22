@@ -15,6 +15,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "TGT Nexus — Team Tasks Manager",
   description: "Internal team task management for TGT Nexus",
+  icons: {
+    icon: "/tgtnexus_logo.jpg",
+    apple: "/tgtnexus_logo.jpg",
+  },
 };
 
 export default function RootLayout({

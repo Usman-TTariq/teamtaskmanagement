@@ -12,6 +12,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { directSignIn, sendMagicLink } from "@/app/actions/auth";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { DIRECT_SIGN_IN_EMAIL, ROLE_META, type UserRole } from "@/lib/constants";
 import type { AllowedEmail } from "@/lib/types";
 
@@ -85,16 +86,12 @@ export function LockScreen({ allowedEmails, demoAuthEnabled = false }: Props) {
     <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(1200px_500px_at_50%_-10%,#1A1320_0%,#0A0A10_55%)] p-6">
       <div className="w-full max-w-md">
         <div className="mb-6 flex justify-center">
-          <div className="rounded-2xl bg-white px-6 py-4 shadow-2xl">
-            <div className="text-center">
-              <div className="text-xl font-extrabold tracking-tight text-[#14141A]">
-                TGT Nexus
-              </div>
-              <div className="text-xs font-semibold text-[#6B6C7A]">
-                Team Tasks Manager
-              </div>
-            </div>
-          </div>
+          <BrandLogo
+            size="lg"
+            layout="vertical"
+            tagline="Team Tasks Manager"
+            textClassName="text-white"
+          />
         </div>
 
         {step === "email" ? (
