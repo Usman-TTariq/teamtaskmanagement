@@ -1,36 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TGT Nexus — Team Tasks Manager
 
-## Getting Started
+Production version of the [Claude artifact](https://claude.ai/public/artifacts/acc66cc8-bf4e-4e70-bc20-9a9b9be38047) task manager.
 
-First, run the development server:
+## Stack
+
+- Next.js 16 + React 19 + TypeScript
+- Tailwind CSS v4
+- Supabase (Auth, Postgres, RLS)
+
+## Setup
+
+1. Copy env file:
+
+```bash
+cp .env.local.example .env.local
+```
+
+2. Create a Supabase project and add credentials to `.env.local`.
+
+3. Run the migration in Supabase SQL Editor (or via CLI):
+
+```
+supabase/migrations/20250622000000_initial_schema.sql
+```
+
+4. Enable Email auth in Supabase Dashboard (Authentication → Providers → Email).
+
+5. **Email sign-in (required):** Supabase Dashboard:
+   - **Authentication → URL Configuration → Redirect URLs:** add `http://localhost:3003/auth/callback`
+   - **Authentication → SMTP Settings:** configure SMTP for `@tgtnexus.net` (Microsoft 365 / Outlook). Without this, sign-in emails won't reach inboxes.
+
+6. Start dev server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+6. Open [http://localhost:3000/login](http://localhost:3000/login)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Tap a team email chip to fill the address, click **Send sign-in link**, then open the link from your Outlook inbox to sign in.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Team (seeded in migration)
 
-## Learn More
+| Email | Role |
+|-------|------|
+| abdullah.zahid@tgtnexus.net | Manager |
+| gufran.ahmed@tgtnexus.net | Team Lead |
+| yasal.khan@tgtnexus.net | Developer |
+| usman.tariq@tgtnexus.net | Developer |
+| hammad.noor@tgtnexus.net | Designer |
+| daniyal.naveed@tgtnexus.net | SEO |
 
-To learn more about Next.js, take a look at the following resources:
+## Phases
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Phase 1 (current):** Auth, role-based nav, app shell
+- **Phase 2:** Task CRUD, My/All tasks
+- **Phase 3:** Kanban, Team view, Dashboard
+- **Phase 4:** Files, Settings, deploy
