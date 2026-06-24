@@ -8,10 +8,5 @@ export default async function LoginPage() {
     .select("email, name, role")
     .order("email");
 
-  return (
-    <LockScreen
-      allowedEmails={allowedEmails ?? []}
-      demoAuthEnabled={process.env.DEMO_AUTH_ENABLED === "true"}
-    />
-  );
+  return <LockScreen allowedEmails={allowedEmails ?? []} />;
 }

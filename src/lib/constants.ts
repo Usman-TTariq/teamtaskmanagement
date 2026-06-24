@@ -8,8 +8,6 @@ export const ROLES = [
 
 export type UserRole = (typeof ROLES)[number];
 
-export const DIRECT_SIGN_IN_EMAIL = "abdullah.zahid@tgtnexus.net";
-
 export const ASSIGN_ROLES: UserRole[] = ["Manager", "Team Lead"];
 
 export const STATUSES = [
@@ -128,5 +126,5 @@ export const VIEW_SUBTITLES: Record<string, string> = {
   board: "Workflow by status, everyone's tasks",
   all: "Every task, filterable",
   mine: "Your assigned work",
-  settings: "Roles, brands and data",
+  settings: "Account and team configuration",
 };

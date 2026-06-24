@@ -36,5 +36,8 @@ export function navItemsForRole(role: UserRole | null | undefined): NavItem[] {
     return items;
   }
 
-  return [{ key: "mine", label: "My tasks", href: "/mine" }];
+  return [
+    { key: "mine", label: "My tasks", href: "/mine" },
+    { key: "settings", label: "Settings", href: "/settings" },
+  ];
 }

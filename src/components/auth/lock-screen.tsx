@@ -1,19 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
-  CheckCircle2,
   Code2,
   Crown,
+  Eye,
+  EyeOff,
+  Lock,
   Mail,
   Palette,
   Star,
   TrendingUp,
 } from "lucide-react";
-import { directSignIn, sendMagicLink } from "@/app/actions/auth";
+import { signInWithPassword } from "@/app/actions/auth";
 import { BrandLogo } from "@/components/ui/brand-logo";
-import { DIRECT_SIGN_IN_EMAIL, ROLE_META, type UserRole } from "@/lib/constants";
+import { ROLE_META, type UserRole } from "@/lib/constants";
 import type { AllowedEmail } from "@/lib/types";
 
 const ROLE_ICONS: Record<UserRole, typeof Crown> = {
@@ -26,59 +29,42 @@ const ROLE_ICONS: Record<UserRole, typeof Crown> = {
 
 type Props = {
   allowedEmails: AllowedEmail[];
-  demoAuthEnabled?: boolean;
 };
 
-export function LockScreen({ allowedEmails, demoAuthEnabled = false }: Props) {
+export function LockScreen({ allowedEmails }: Props) {
   const router = useRouter();
-  const [step, setStep] = useState<"email" | "sent">("email");
   const [email, setEmail] = useState("");
-  const [targetEmail, setTargetEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
 
-  const isDirectSignIn = email.trim().toLowerCase() === DIRECT_SIGN_IN_EMAIL;
-  const instantSignIn = demoAuthEnabled || isDirectSignIn;
-
   function handleChipClick(personEmail: string) {
-    const value = personEmail.trim().toLowerCase();
-    setEmail(value);
+    setEmail(personEmail.trim().toLowerCase());
     setError("");
-
-    if (demoAuthEnabled || value === DIRECT_SIGN_IN_EMAIL) {
-      handleSignIn(value);
-    }
   }
 
-  function handleSignIn(address?: string) {
-    const value = (address ?? email).trim().toLowerCase();
+  function handleSignIn() {
+    const value = email.trim().toLowerCase();
     if (!value) {
       setError("Enter your @tgtnexus.net work email.");
       return;
     }
+    if (!password) {
+      setError("Enter your password.");
+      return;
+    }
+
     setEmail(value);
     setError("");
     startTransition(async () => {
-      if (demoAuthEnabled || value === DIRECT_SIGN_IN_EMAIL) {
-        const result = demoAuthEnabled
-          ? await sendMagicLink(value)
-          : await directSignIn(value);
-        if (result.error) {
-          setError(result.error);
-          return;
-        }
-        router.push("/");
-        router.refresh();
-        return;
-      }
-
-      const result = await sendMagicLink(value);
+      const result = await signInWithPassword(value, password);
       if (result.error) {
         setError(result.error);
         return;
       }
-      setTargetEmail(result.email ?? value);
-      setStep("sent");
+      router.push("/");
+      router.refresh();
     });
   }
 
@@ -94,122 +80,118 @@ export function LockScreen({ allowedEmails, demoAuthEnabled = false }: Props) {
           />
         </div>
 
-        {step === "email" ? (
-          <>
-            <p className="mb-5 text-center text-sm text-[#8A8B99]">
-              {demoAuthEnabled
-                ? "Dev mode — tap your email to sign in instantly"
-                : "Sign in with your work Outlook email"}
-            </p>
-            <div className="rounded-2xl bg-white p-5 shadow-2xl">
-              <label className="mb-1.5 block text-xs font-bold text-[#6B6C7A]">
-                Work email
-              </label>
-              <div className="relative mb-3">
-                <Mail
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6C7A]"
-                />
-                <input
-                  autoFocus
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
-                  placeholder="you@tgtnexus.net"
-                  className="w-full rounded-xl border border-[#E4E6EF] py-2.5 pl-10 pr-3 text-sm outline-none focus:border-[#E11D2A]"
-                />
-              </div>
-              {error && (
-                <p className="mb-3 text-xs font-medium text-[#E11D2A]">{error}</p>
-              )}
-              <button
-                type="button"
-                onClick={() => handleSignIn()}
-                disabled={pending}
-                className="w-full rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/30 disabled:opacity-60"
-              >
-                {pending
-                  ? instantSignIn
-                    ? "Signing in…"
-                    : "Sending…"
-                  : instantSignIn
-                    ? "Sign in"
-                    : "Send sign-in link"}
-              </button>
+        <p className="mb-5 text-center text-sm text-[#8A8B99]">
+          Sign in with your work email and password
+        </p>
+        <div className="rounded-2xl bg-white p-5 shadow-2xl">
+          <label className="mb-1.5 block text-xs font-bold text-[#6B6C7A]">
+            Work email
+          </label>
+          <div className="relative mb-3">
+            <Mail
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6C7A]"
+            />
+            <input
+              autoFocus
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
+              placeholder="you@tgtnexus.net"
+              className="w-full rounded-xl border border-[#E4E6EF] py-2.5 pl-10 pr-3 text-sm outline-none focus:border-[#E11D2A]"
+            />
+          </div>
 
-              {allowedEmails.length > 0 && (
-                <div className="mt-4 border-t border-[#E4E6EF] pt-3">
-                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[#9495A3]">
-                    {demoAuthEnabled
-                      ? "Team emails — tap to sign in"
-                      : "Team emails (Abdullah signs in directly; others tap to fill)"}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {allowedEmails.map((person) => {
-                      const meta = ROLE_META[person.role];
-                      const Icon = ROLE_ICONS[person.role];
-                      const selected =
-                        email.toLowerCase() === person.email.toLowerCase();
-                      return (
-                        <button
-                          key={person.email}
-                          type="button"
-                          onClick={() => handleChipClick(person.email)}
-                          disabled={pending}
-                          className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold disabled:opacity-60"
-                          style={{
-                            color: meta.color,
-                            borderColor: selected ? meta.color : `${meta.color}30`,
-                            background: selected ? `${meta.color}22` : `${meta.color}12`,
-                          }}
-                        >
-                          <Icon size={11} strokeWidth={2.7} />
-                          {person.email}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="rounded-2xl bg-white p-6 text-center shadow-2xl">
-            <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-[#DCF7EC]">
-              <Mail size={22} className="text-[#059669]" />
-            </div>
-            <h2 className="mb-1 text-lg font-extrabold">Check your inbox</h2>
-            <p className="text-sm text-[#14141A]">A sign-in link was sent to</p>
-            <p className="mb-4 text-sm font-bold">{targetEmail}</p>
-            <p className="mb-4 text-xs leading-relaxed text-[#9495A3]">
-              Open Outlook and click the sign-in link for{" "}
-              <span className="font-semibold text-[#14141A]">{targetEmail}</span>.
-              You will be logged in after clicking the link. Check spam if it
-              does not arrive within a minute.
-            </p>
-            {error && (
-              <p className="mb-3 text-xs font-medium text-[#E11D2A]">{error}</p>
-            )}
+          <label className="mb-1.5 block text-xs font-bold text-[#6B6C7A]">
+            Password
+          </label>
+          <div className="relative mb-1">
+            <Lock
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6B6C7A]"
+            />
+            <input
+              type={showPassword ? "text" : "password"}
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSignIn()}
+              placeholder="Your password"
+              className="w-full rounded-xl border border-[#E4E6EF] py-2.5 pl-10 pr-10 text-sm outline-none focus:border-[#E11D2A]"
+            />
             <button
               type="button"
-              onClick={() => {
-                setStep("email");
-                setEmail("");
-                setError("");
-              }}
-              className="text-xs font-semibold text-[#6B6C7A]"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6C7A] hover:text-[#14141A]"
+              aria-label={showPassword ? "Hide password" : "Show password"}
             >
-              Use a different email
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
-            <p className="mt-4 flex items-center justify-center gap-1 text-[11px] text-[#9495A3]">
-              <CheckCircle2 size={12} />
-              The link expires after a short time for security.
-            </p>
           </div>
-        )}
+
+          <div className="mb-3 flex justify-end">
+            <Link
+              href="/forgot-password"
+              className="text-xs font-semibold text-[#6B6C7A] hover:text-[#E11D2A]"
+            >
+              Forgot password?
+            </Link>
+          </div>
+
+          {error && (
+            <p className="mb-3 text-xs font-medium text-[#E11D2A]">{error}</p>
+          )}
+          <button
+            type="button"
+            onClick={handleSignIn}
+            disabled={pending}
+            className="w-full rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/30 disabled:opacity-60"
+          >
+            {pending ? "Signing in…" : "Sign in"}
+          </button>
+
+          {allowedEmails.length > 0 && (
+            <div className="mt-4 border-t border-[#E4E6EF] pt-3">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[#9495A3]">
+                Team emails — tap to fill
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {allowedEmails.map((person) => {
+                  const meta = ROLE_META[person.role];
+                  const Icon = ROLE_ICONS[person.role];
+                  const selected =
+                    email.toLowerCase() === person.email.toLowerCase();
+                  return (
+                    <button
+                      key={person.email}
+                      type="button"
+                      onClick={() => handleChipClick(person.email)}
+                      disabled={pending}
+                      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold disabled:opacity-60"
+                      style={{
+                        color: meta.color,
+                        borderColor: selected ? meta.color : `${meta.color}30`,
+                        background: selected ? `${meta.color}22` : `${meta.color}12`,
+                      }}
+                    >
+                      <Icon size={11} strokeWidth={2.7} />
+                      {person.email}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
 
         <p className="mt-5 text-center text-xs text-[#5C5C6A]">
-          Only people added by Abdullah can sign in.
+          Only people added by Abdullah can sign in. First time? Use{" "}
+          <Link href="/forgot-password" className="font-semibold text-[#8A8B99] hover:text-white">
+            Forgot password
+          </Link>{" "}
+          to set yours.
         </p>
       </div>
     </div>

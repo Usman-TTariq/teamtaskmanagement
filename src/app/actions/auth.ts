@@ -1,18 +1,15 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { DIRECT_SIGN_IN_EMAIL } from "@/lib/constants";
 import { ensureAuthUser } from "@/lib/team-profiles";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-function isDemoAuthEnabled() {
-  return process.env.DEMO_AUTH_ENABLED === "true";
-}
+const ALLOWLIST_ERROR =
+  "We couldn't find an account for that email. Ask Abdullah to add you.";
 
-async function signInWithoutEmail(normalized: string) {
+async function getAllowedUser(email: string) {
   const supabase = await createClient();
-  const admin = createAdminClient();
+  const normalized = email.trim().toLowerCase();
 
   const { data: allowed } = await supabase
     .from("allowed_emails")
@@ -20,10 +17,32 @@ async function signInWithoutEmail(normalized: string) {
     .eq("email", normalized)
     .maybeSingle();
 
+  return { normalized, allowed };
+}
+
+function authCallbackUrl(next?: string) {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!siteUrl) return null;
+
+  const params = new URLSearchParams();
+  if (next) params.set("next", next);
+  const query = params.toString();
+  return query
+    ? `${siteUrl}/auth/callback?${query}`
+    : `${siteUrl}/auth/callback`;
+}
+
+export async function signInWithPassword(email: string, password: string) {
+  const { normalized, allowed } = await getAllowedUser(email);
+
+  if (!normalized) {
+    return { error: "Email is required" };
+  }
+  if (!password) {
+    return { error: "Password is required" };
+  }
   if (!allowed) {
-    return {
-      error: "We couldn't find an account for that email. Ask Abdullah to add you.",
-    };
+    return { error: ALLOWLIST_ERROR };
   }
 
   const prepared = await ensureAuthUser(
@@ -35,62 +54,33 @@ async function signInWithoutEmail(normalized: string) {
     return { error: prepared.error };
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  const { data: linkData, error: linkError } =
-    await admin.auth.admin.generateLink({
-      type: "magiclink",
-      email: normalized,
-      options: siteUrl
-        ? { redirectTo: `${siteUrl}/auth/callback` }
-        : undefined,
-    });
-
-  if (linkError || !linkData?.properties?.hashed_token) {
-    const message =
-      linkError?.message && linkError.message !== "{}"
-        ? linkError.message
-        : "Could not sign in. Try again in a moment.";
-    return { error: message };
-  }
-
-  const { error: verifyError } = await supabase.auth.verifyOtp({
-    token_hash: linkData.properties.hashed_token,
-    type: "magiclink",
+  const supabase = await createClient();
+  const { error } = await supabase.auth.signInWithPassword({
+    email: normalized,
+    password,
   });
 
-  if (verifyError) {
-    return { error: verifyError.message };
+  if (error) {
+    const message =
+      error.message === "Invalid login credentials"
+        ? "Incorrect email or password."
+        : error.message && error.message !== "{}"
+          ? error.message
+          : "Could not sign in. Try again.";
+    return { error: message };
   }
 
   return { success: true as const };
 }
 
-export async function sendMagicLink(email: string) {
-  const normalized = email.trim().toLowerCase();
+export async function requestPasswordReset(email: string) {
+  const { normalized, allowed } = await getAllowedUser(email);
+
   if (!normalized) {
     return { error: "Email is required" };
   }
-
-  if (isDemoAuthEnabled()) {
-    const result = await signInWithoutEmail(normalized);
-    if (result.error) {
-      return { error: result.error };
-    }
-    return { success: true, email: normalized, direct: true };
-  }
-
-  const supabase = await createClient();
-
-  const { data: allowed } = await supabase
-    .from("allowed_emails")
-    .select("email, name, role")
-    .eq("email", normalized)
-    .maybeSingle();
-
   if (!allowed) {
-    return {
-      error: "We couldn't find an account for that email. Ask Abdullah to add you.",
-    };
+    return { error: ALLOWLIST_ERROR };
   }
 
   const prepared = await ensureAuthUser(
@@ -102,43 +92,97 @@ export async function sendMagicLink(email: string) {
     return { error: prepared.error };
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  if (!siteUrl) {
+  const redirectTo = authCallbackUrl("/reset-password");
+  if (!redirectTo) {
     return { error: "App URL is not configured (NEXT_PUBLIC_SITE_URL)." };
   }
 
-  const { error } = await supabase.auth.signInWithOtp({
-    email: normalized,
-    options: {
-      shouldCreateUser: false,
-      emailRedirectTo: `${siteUrl}/auth/callback`,
-    },
+  const supabase = await createClient();
+  const { error } = await supabase.auth.resetPasswordForEmail(normalized, {
+    redirectTo,
   });
 
   if (error) {
     const message =
       error.message && error.message !== "{}"
         ? error.message
-        : "Could not send sign-in email. Ask admin to configure Supabase SMTP for @tgtnexus.net.";
+        : "Could not send reset email. Ask admin to configure Supabase SMTP for @tgtnexus.net.";
     return { error: message };
   }
 
-  return { success: true, email: normalized };
+  return { success: true as const, email: normalized };
 }
 
-export async function directSignIn(email: string) {
-  const normalized = email.trim().toLowerCase();
-
-  if (normalized !== DIRECT_SIGN_IN_EMAIL) {
-    return { error: "Direct sign-in is only available for the manager account." };
+export async function updatePassword(newPassword: string) {
+  if (!newPassword || newPassword.length < 6) {
+    return { error: "Password must be at least 6 characters." };
   }
 
-  const result = await signInWithoutEmail(normalized);
-  if (result.error) {
-    return { error: result.error };
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Your session expired. Request a new reset link." };
   }
 
-  return { success: true };
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+  if (error) {
+    const message =
+      error.message && error.message !== "{}"
+        ? error.message
+        : "Could not update password. Try again.";
+    return { error: message };
+  }
+
+  return { success: true as const };
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+) {
+  if (!currentPassword) {
+    return { error: "Current password is required." };
+  }
+  if (!newPassword || newPassword.length < 6) {
+    return { error: "New password must be at least 6 characters." };
+  }
+  if (currentPassword === newPassword) {
+    return { error: "New password must be different from your current password." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email) {
+    return { error: "You must be signed in to change your password." };
+  }
+
+  const { error: signInError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: currentPassword,
+  });
+
+  if (signInError) {
+    return { error: "Current password is incorrect." };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+  if (error) {
+    const message =
+      error.message && error.message !== "{}"
+        ? error.message
+        : "Could not update password. Try again.";
+    return { error: message };
+  }
+
+  return { success: true as const };
 }
 
 export async function signOut() {

@@ -1,19 +1,26 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
+function resolveRedirectPath(type: string | null, next: string | null) {
+  if (next) return next;
+  if (type === "recovery" || type === "invite") return "/reset-password";
+  return "/";
+}
+
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const token_hash = searchParams.get("token_hash");
   const type = searchParams.get("type");
-  const next = searchParams.get("next") ?? "/";
+  const next = searchParams.get("next");
 
   const supabase = await createClient();
+  const redirectPath = resolveRedirectPath(type, next);
 
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
+      return NextResponse.redirect(`${origin}${redirectPath}`);
     }
   }
 
@@ -23,7 +30,7 @@ export async function GET(request: Request) {
       type: type as "email" | "magiclink" | "signup" | "recovery" | "invite",
     });
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
+      return NextResponse.redirect(`${origin}${redirectPath}`);
     }
   }
 
