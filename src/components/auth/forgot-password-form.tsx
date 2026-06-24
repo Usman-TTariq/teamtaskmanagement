@@ -95,8 +95,9 @@ export function ForgotPasswordForm() {
             <p className="mb-4 text-xs leading-relaxed text-[#9495A3]">
               Open Outlook and click the link for{" "}
               <span className="font-semibold text-[#14141A]">{targetEmail}</span>.
-              You can set a new password from that page. Check spam if it does
-              not arrive within a minute.
+              You can set a new password from that page. Check spam and junk if
+              it does not arrive within 2 minutes. If still nothing, ask Abdullah
+              to generate a reset link from Settings.
             </p>
             <Link
               href="/login"
