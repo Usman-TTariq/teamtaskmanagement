@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ensureAuthUser } from "@/lib/team-profiles";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -21,8 +22,20 @@ async function getAllowedUser(email: string) {
   return { normalized, allowed };
 }
 
-function authCallbackUrl(next?: string) {
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+async function getSiteUrl() {
+  const headersList = await headers();
+  const host =
+    headersList.get("x-forwarded-host") ?? headersList.get("host");
+  const protocol = headersList.get("x-forwarded-proto") ?? "https";
+
+  if (host && !host.startsWith("localhost") && !host.startsWith("127.0.0.1")) {
+    return `${protocol}://${host.split(",")[0]?.trim()}`;
+  }
+
+  return process.env.NEXT_PUBLIC_SITE_URL ?? null;
+}
+
+function authCallbackUrl(siteUrl: string | null, next?: string) {
   if (!siteUrl) return null;
 
   const params = new URLSearchParams();
@@ -31,6 +44,20 @@ function authCallbackUrl(next?: string) {
   return query
     ? `${siteUrl}/auth/callback?${query}`
     : `${siteUrl}/auth/callback`;
+}
+
+function mapPasswordResetError(raw: string) {
+  const message = raw.toLowerCase();
+  if (message.includes("rate limit")) {
+    return "Too many reset emails sent. Wait about an hour, or ask Abdullah to generate a reset link from Settings.";
+  }
+  if (message.includes("security purposes") || message.includes("after")) {
+    return "Please wait 60 seconds before requesting another reset email.";
+  }
+  if (message.includes("redirect") || message.includes("url")) {
+    return "Reset link misconfigured. Ask admin to add the production callback URL in Supabase.";
+  }
+  return raw && raw !== "{}" ? raw : "Could not send reset email. Check Supabase SMTP settings and try again.";
 }
 
 export async function signInWithPassword(email: string, password: string) {
@@ -93,7 +120,8 @@ export async function requestPasswordReset(email: string) {
     return { error: prepared.error };
   }
 
-  const redirectTo = authCallbackUrl("/reset-password");
+  const siteUrl = await getSiteUrl();
+  const redirectTo = authCallbackUrl(siteUrl, "/reset-password");
   if (!redirectTo) {
     return { error: "App URL is not configured (NEXT_PUBLIC_SITE_URL)." };
   }
@@ -104,18 +132,7 @@ export async function requestPasswordReset(email: string) {
   });
 
   if (error) {
-    const raw = error.message ?? "";
-    if (raw.toLowerCase().includes("rate limit")) {
-      return {
-        error:
-          "Too many reset emails sent. Wait about an hour, or ask Abdullah to generate a reset link from Settings.",
-      };
-    }
-    const message =
-      raw && raw !== "{}"
-        ? raw
-        : "Could not send reset email. Check Supabase SMTP settings and try again.";
-    return { error: message };
+    return { error: mapPasswordResetError(error.message ?? "") };
   }
 
   return { success: true as const, email: normalized };
@@ -144,7 +161,8 @@ export async function generatePasswordResetLink(email: string) {
     return { error: prepared.error };
   }
 
-  const redirectTo = authCallbackUrl("/reset-password");
+  const siteUrl = await getSiteUrl();
+  const redirectTo = authCallbackUrl(siteUrl, "/reset-password");
   if (!redirectTo) {
     return { error: "App URL is not configured (NEXT_PUBLIC_SITE_URL)." };
   }
