@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   Code2,
@@ -32,7 +31,6 @@ type Props = {
 };
 
 export function LockScreen({ allowedEmails }: Props) {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -63,8 +61,7 @@ export function LockScreen({ allowedEmails }: Props) {
         setError(result.error);
         return;
       }
-      router.push("/");
-      router.refresh();
+      window.location.assign("/");
     });
   }
 

@@ -61,28 +61,25 @@ function mapPasswordResetError(raw: string) {
 }
 
 export async function signInWithPassword(email: string, password: string) {
-  const { normalized, allowed } = await getAllowedUser(email);
-
+  const normalized = email.trim().toLowerCase();
   if (!normalized) {
     return { error: "Email is required" };
   }
   if (!password) {
     return { error: "Password is required" };
   }
+
+  const supabase = await createClient();
+  const { data: allowed } = await supabase
+    .from("allowed_emails")
+    .select("email, name, role")
+    .eq("email", normalized)
+    .maybeSingle();
+
   if (!allowed) {
     return { error: ALLOWLIST_ERROR };
   }
 
-  const prepared = await ensureAuthUser(
-    normalized,
-    allowed.name,
-    allowed.role,
-  );
-  if (prepared.error) {
-    return { error: prepared.error };
-  }
-
-  const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({
     email: normalized,
     password,

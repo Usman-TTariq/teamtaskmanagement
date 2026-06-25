@@ -1,6 +1,8 @@
 import { LockScreen } from "@/components/auth/lock-screen";
 import { createClient } from "@/lib/supabase/server";
 
+export const revalidate = 300;
+
 export default async function LoginPage() {
   const supabase = await createClient();
   const { data: allowedEmails } = await supabase

@@ -111,14 +111,18 @@ export async function getTaskFormData(): Promise<{
   members: Profile[];
 }> {
   await requireProfile();
+  return getTaskFormDataForProfile();
+}
 
+export async function getTaskFormDataForProfile(): Promise<{
+  brands: Brand[];
+  members: Profile[];
+}> {
   const supabase = await createClient();
-  const { data: brands } = await supabase
-    .from("brands")
-    .select("id, name")
-    .order("name");
-
-  const members = await getTeamProfiles();
+  const [{ data: brands }, members] = await Promise.all([
+    supabase.from("brands").select("id, name").order("name"),
+    getTeamProfiles(),
+  ]);
 
   return {
     brands: brands ?? [],
@@ -861,6 +865,12 @@ export async function requestTaskChanges(taskId: string, comment: string) {
 
 export async function getUnreadNotificationCount(): Promise<number> {
   const profile = await requireProfile();
+  return getUnreadNotificationCountForProfile(profile);
+}
+
+export async function getUnreadNotificationCountForProfile(
+  profile: Profile,
+): Promise<number> {
   if (!canAssign(profile.role)) return 0;
 
   const supabase = await createClient();
