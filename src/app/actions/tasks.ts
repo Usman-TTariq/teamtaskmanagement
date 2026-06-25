@@ -905,7 +905,7 @@ export async function approveTask(taskId: string) {
   await notifyUser(
     task.assignee_id,
     taskId,
-    `Your task "${task.title}" was approved`,
+    `${profile.name} approved "${task.title}"`,
   );
 
   await supabase.from("activity_log").insert({
@@ -962,7 +962,7 @@ export async function requestTaskChanges(taskId: string, comment: string) {
   await notifyUser(
     task.assignee_id,
     taskId,
-    `Changes requested on "${task.title}": ${text}`,
+    `${profile.name} sent feedback on "${task.title}": ${text}`,
   );
 
   await supabase.from("activity_log").insert({
@@ -1043,6 +1043,23 @@ export async function addTaskComment(taskId: string, body: string) {
       taskId,
       `${profile.name} commented on "${task.title}" under review`,
     );
+  } else if (task.assignee_id === profile.id && task.status === "In Progress") {
+    const { data: lastReview } = await supabase
+      .from("task_submissions")
+      .select("reviewed_by")
+      .eq("task_id", taskId)
+      .eq("review_status", "changes")
+      .order("reviewed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastReview?.reviewed_by && lastReview.reviewed_by !== profile.id) {
+      await notifyUser(
+        lastReview.reviewed_by,
+        taskId,
+        `${profile.name} replied on "${task.title}": ${text}`,
+      );
+    }
   }
 
   revalidateTaskPaths();
@@ -1141,6 +1158,23 @@ export async function addTaskVoiceComment(taskId: string, formData: FormData) {
       taskId,
       `${profile.name} sent a voice note on "${task.title}" under review`,
     );
+  } else if (task.assignee_id === profile.id && task.status === "In Progress") {
+    const { data: lastReview } = await supabase
+      .from("task_submissions")
+      .select("reviewed_by")
+      .eq("task_id", taskId)
+      .eq("review_status", "changes")
+      .order("reviewed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastReview?.reviewed_by && lastReview.reviewed_by !== profile.id) {
+      await notifyUser(
+        lastReview.reviewed_by,
+        taskId,
+        `${profile.name} sent a voice reply on "${task.title}"`,
+      );
+    }
   }
 
   revalidateTaskPaths();

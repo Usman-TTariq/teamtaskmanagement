@@ -62,9 +62,18 @@ export function useNotifications() {
 function notificationIcon(message: string) {
   const lower = message.toLowerCase();
   if (lower.includes("assigned you")) return ClipboardList;
-  if (lower.includes("voice note")) return Mic;
-  if (lower.includes("commented") || lower.includes("comment")) return MessageSquare;
+  if (lower.includes("voice note") || lower.includes("voice reply")) return Mic;
+  if (
+    lower.includes("commented") ||
+    lower.includes("comment") ||
+    lower.includes("feedback") ||
+    lower.includes("replied") ||
+    lower.includes("changes requested")
+  ) {
+    return MessageSquare;
+  }
   if (lower.includes("approved")) return CheckCircle2;
+  if (lower.includes("submitted") && lower.includes("review")) return ClipboardList;
   return Bell;
 }
 
@@ -96,11 +105,47 @@ function parseNotificationContent(message: string): ParsedNotification {
     };
   }
 
+  const feedbackMatch = message.match(/^(.+?) sent feedback on "(.+?)": (.+)$/s);
+  if (feedbackMatch) {
+    return {
+      senderName: feedbackMatch[1],
+      preview: `Feedback on “${feedbackMatch[2]}”: ${feedbackMatch[3]}`,
+      supportsReply: true,
+    };
+  }
+
+  const legacyFeedbackMatch = message.match(/^Changes requested on "(.+?)": (.+)$/s);
+  if (legacyFeedbackMatch) {
+    return {
+      senderName: null,
+      preview: `Feedback on “${legacyFeedbackMatch[1]}”: ${legacyFeedbackMatch[2]}`,
+      supportsReply: true,
+    };
+  }
+
+  const replyMatch = message.match(/^(.+?) replied on "(.+?)": (.+)$/s);
+  if (replyMatch) {
+    return {
+      senderName: replyMatch[1],
+      preview: `Reply on “${replyMatch[2]}”: ${replyMatch[3]}`,
+      supportsReply: true,
+    };
+  }
+
   const commentMatch = message.match(/^(.+?) commented on "(.+)"(?: under review)?$/);
   if (commentMatch) {
     return {
       senderName: commentMatch[1],
       preview: commentMatch[2],
+      supportsReply: true,
+    };
+  }
+
+  const voiceReplyMatch = message.match(/^(.+?) sent a voice reply on "(.+)"$/);
+  if (voiceReplyMatch) {
+    return {
+      senderName: voiceReplyMatch[1],
+      preview: `Voice reply on “${voiceReplyMatch[2]}”`,
       supportsReply: true,
     };
   }
@@ -123,6 +168,15 @@ function parseNotificationContent(message: string): ParsedNotification {
     };
   }
 
+  const approvedByMatch = message.match(/^(.+?) approved "(.+)"$/);
+  if (approvedByMatch) {
+    return {
+      senderName: approvedByMatch[1],
+      preview: `Approved “${approvedByMatch[2]}”`,
+      supportsReply: false,
+    };
+  }
+
   const approvedMatch = message.match(/^Your task "(.+)" was approved$/);
   if (approvedMatch) {
     return {
@@ -135,7 +189,7 @@ function parseNotificationContent(message: string): ParsedNotification {
   return {
     senderName: null,
     preview: message,
-    supportsReply: false,
+    supportsReply: Boolean(message.match(/comment|feedback|replied|voice/i)),
   };
 }
 
@@ -290,7 +344,7 @@ export function NotificationProvider({
         if (current.some((item) => item.id === notification.id)) {
           return current;
         }
-        return [...current, { ...notification, visible: true }].slice(-4);
+        return [...current, { ...notification, visible: true }].slice(-5);
       });
 
       const timer = window.setTimeout(() => {
@@ -338,9 +392,10 @@ export function NotificationProvider({
         initializedRef.current = true;
 
         if (showPopups) {
-          for (const item of items.filter((entry) => !entry.read).slice(0, 3)) {
-            pushToast(item);
-          }
+          const unread = items.filter((entry) => !entry.read).slice(0, 5);
+          unread.forEach((item, index) => {
+            window.setTimeout(() => pushToast(item), index * 400);
+          });
         }
 
         return items;
@@ -389,7 +444,7 @@ export function NotificationProvider({
     }
 
     void poll();
-    const interval = window.setInterval(poll, 8000);
+    const interval = window.setInterval(poll, 5000);
 
     return () => {
       cancelled = true;
@@ -431,16 +486,23 @@ export function NotificationProvider({
 
   useEffect(() => {
     function onFocus() {
-      void refreshNotifications(false);
+      void refreshNotifications(true);
     }
     function onRefresh() {
-      void refreshNotifications(false);
+      void refreshNotifications(true);
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void refreshNotifications(true);
+      }
     }
     window.addEventListener("focus", onFocus);
     window.addEventListener("notifications:refresh", onRefresh);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("notifications:refresh", onRefresh);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [refreshNotifications]);
 
