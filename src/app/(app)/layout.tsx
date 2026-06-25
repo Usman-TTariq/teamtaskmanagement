@@ -1,11 +1,10 @@
 import { AppShell } from "@/components/layout/app-shell";
+import { NotificationProvider } from "@/components/notifications/notification-provider";
 import { TaskDetailProvider } from "@/components/tasks/task-detail-context";
 import { TaskModalProvider } from "@/components/tasks/task-modal-context";
 import { getCurrentProfile } from "@/app/actions/auth";
-import {
-  getTaskFormDataForProfile,
-  getUnreadNotificationCountForProfile,
-} from "@/app/actions/tasks";
+import { getUnreadNotificationCountForProfile } from "@/app/actions/notifications";
+import { getTaskFormDataForProfile } from "@/app/actions/tasks";
 import { redirect } from "next/navigation";
 
 export default async function ProtectedLayout({
@@ -27,12 +26,12 @@ export default async function ProtectedLayout({
   return (
     <TaskModalProvider profile={profile} brands={brands} members={members}>
       <TaskDetailProvider profile={profile}>
-        <AppShell
-          profile={profile}
-          unreadNotificationCount={unreadNotificationCount}
+        <NotificationProvider
+          profileId={profile.id}
+          initialUnreadCount={unreadNotificationCount}
         >
-          {children}
-        </AppShell>
+          <AppShell profile={profile}>{children}</AppShell>
+        </NotificationProvider>
       </TaskDetailProvider>
     </TaskModalProvider>
   );

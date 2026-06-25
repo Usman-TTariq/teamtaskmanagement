@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Bell,
   LayoutDashboard,
   LayoutGrid,
   ListChecks,
@@ -13,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 import { signOut } from "@/app/actions/auth";
+import { NotificationBell } from "@/components/notifications/notification-provider";
 import { useTaskModalOptional } from "@/components/tasks/task-modal-context";
 import { BrandLogo, BrandMark } from "@/components/ui/brand-logo";
 import { Avatar } from "@/components/ui/avatar";
@@ -32,53 +32,29 @@ const ICONS = {
 type Props = {
   profile: Profile;
   children: React.ReactNode;
-  unreadNotificationCount?: number;
 };
 
-function HeaderActions({
-  profile,
-  unreadNotificationCount = 0,
-}: {
-  profile: Profile;
-  unreadNotificationCount?: number;
-}) {
+function HeaderActions({ profile }: { profile: Profile }) {
   const taskModal = useTaskModalOptional();
-
-  if (!canAssign(profile.role) || !taskModal) {
-    return null;
-  }
 
   return (
     <div className="flex items-center gap-3">
-      <button
-        type="button"
-        className="relative grid h-10 w-10 place-items-center rounded-xl border border-[#E4E6EF] text-[#6B6C7A] transition hover:bg-[#F4F5FA] hover:text-[#14141A]"
-        aria-label="Notifications"
-      >
-        <Bell size={18} />
-        {unreadNotificationCount > 0 && (
-          <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-[#E11D2A] px-1 text-[10px] font-extrabold text-white">
-            {unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}
-          </span>
-        )}
-      </button>
-      <button
-        type="button"
-        onClick={() => taskModal.openCreateTask()}
-        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/25 transition hover:brightness-105"
-      >
-        <Plus size={16} strokeWidth={2.5} />
-        New task
-      </button>
+      <NotificationBell />
+      {canAssign(profile.role) && taskModal && (
+        <button
+          type="button"
+          onClick={() => taskModal.openCreateTask()}
+          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/25 transition hover:brightness-105"
+        >
+          <Plus size={16} strokeWidth={2.5} />
+          New task
+        </button>
+      )}
     </div>
   );
 }
 
-export function AppShell({
-  profile,
-  children,
-  unreadNotificationCount = 0,
-}: Props) {
+export function AppShell({ profile, children }: Props) {
   const pathname = usePathname();
   const navItems = navItemsForRole(profile.role);
 
@@ -163,10 +139,7 @@ export function AppShell({
                 )}
               </div>
             </div>
-            <HeaderActions
-              profile={profile}
-              unreadNotificationCount={unreadNotificationCount}
-            />
+            <HeaderActions profile={profile} />
           </div>
         </header>
 

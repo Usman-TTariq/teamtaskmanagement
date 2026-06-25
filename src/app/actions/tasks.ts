@@ -6,6 +6,7 @@ import { requireLead, requireProfile } from "@/lib/auth-guard";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTeamProfiles } from "@/lib/team-profiles";
+import { TASK_ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES } from "@/lib/task-attachments";
 import { canAssign } from "@/lib/permissions";
 import type { Brand, AllTask, BoardTask, DashboardStats, Profile, TaskComment, TaskDetail, TeamMemberWorkload } from "@/lib/types";
 
@@ -232,6 +233,14 @@ export async function createTask(input: CreateTaskInput) {
     description: `Created task "${title}"`,
   });
 
+  if (input.assigneeId !== creator.id) {
+    await notifyUser(
+      input.assigneeId,
+      task.id,
+      `${creator.name} assigned you "${title}"`,
+    );
+  }
+
   revalidatePath("/team");
   revalidatePath("/");
   revalidatePath("/board");
@@ -303,18 +312,33 @@ export async function getAllTasks(): Promise<AllTask[]> {
     .filter((task): task is AllTask => task != null);
 }
 
-function mapComment(row: {
-  id: string;
-  body: string;
-  created_at: string;
-  author: unknown;
-}): TaskComment | null {
+function mapComment(
+  row: {
+    id: string;
+    body: string;
+    kind?: string;
+    voice_path?: string | null;
+    voice_mime_type?: string | null;
+    created_at: string;
+    author: unknown;
+  },
+  voiceUrl: string | null = null,
+): TaskComment | null {
   const author = profileFromJoin(row.author);
   if (!author) return null;
+  const kind = row.kind === "voice" ? "voice" : "text";
   return {
     id: row.id,
     body: row.body,
+    kind,
     created_at: row.created_at,
+    voiceUrl: kind === "voice" ? voiceUrl : null,
+    voiceMimeType:
+      kind === "voice"
+        ? row.voice_mime_type?.startsWith("audio/")
+          ? row.voice_mime_type
+          : "audio/webm"
+        : null,
     author,
   };
 }
@@ -414,7 +438,7 @@ export async function getTaskDetail(
       assignee:profiles!tasks_assignee_id_fkey(id, name, role),
       reviewer:profiles!tasks_reviewer_id_fkey(id, name, role),
       comments:task_comments(
-        id, body, created_at,
+        id, body, kind, voice_path, voice_mime_type, voice_size_bytes, created_at,
         author:profiles(id, name, role)
       )
     `,
@@ -438,16 +462,66 @@ export async function getTaskDetail(
     return { task: null, error: "Could not load task." };
   }
 
-  const { count } = await supabase
-    .from("task_submissions")
-    .select("id", { count: "exact", head: true })
-    .eq("task_id", taskId);
+  const [{ count }, { data: attachmentRows }, pendingSubmissionId] =
+    await Promise.all([
+      supabase
+        .from("task_submissions")
+        .select("id", { count: "exact", head: true })
+        .eq("task_id", taskId),
+      supabase
+        .from("task_attachments")
+        .select("id, file_name, file_path, kind, mime_type, size_bytes")
+        .eq("task_id", taskId)
+        .order("created_at"),
+      getPendingSubmissionId(supabase, taskId),
+    ]);
 
-  const comments = (data.comments ?? [])
-    .map((row) => mapComment(row))
-    .filter((c): c is TaskComment => c != null);
+  const attachments = await Promise.all(
+    (attachmentRows ?? []).map(async (row) => {
+      const kind = row.kind as "file" | "voice";
+      const mimeType =
+        kind === "voice" && !row.mime_type.startsWith("audio/")
+          ? "audio/webm"
+          : row.mime_type;
 
-  const pendingSubmissionId = await getPendingSubmissionId(supabase, taskId);
+      const { data: playback } = await supabase.storage
+        .from(TASK_ATTACHMENTS_BUCKET)
+        .createSignedUrl(row.file_path, 3600);
+
+      let downloadUrl: string | null = null;
+      if (kind === "file") {
+        const { data: download } = await supabase.storage
+          .from(TASK_ATTACHMENTS_BUCKET)
+          .createSignedUrl(row.file_path, 3600, {
+            download: row.file_name,
+          });
+        downloadUrl = download?.signedUrl ?? null;
+      }
+
+      return {
+        id: row.id,
+        file_name: row.file_name,
+        kind,
+        mime_type: mimeType,
+        size_bytes: row.size_bytes,
+        url: playback?.signedUrl ?? null,
+        downloadUrl,
+      };
+    }),
+  );
+
+  const comments = await Promise.all(
+    (data.comments ?? []).map(async (row) => {
+      let voiceUrl: string | null = null;
+      if (row.kind === "voice" && row.voice_path) {
+        const { data: playback } = await supabase.storage
+          .from(TASK_ATTACHMENTS_BUCKET)
+          .createSignedUrl(row.voice_path, 3600);
+        voiceUrl = playback?.signedUrl ?? null;
+      }
+      return mapComment(row, voiceUrl);
+    }),
+  ).then((rows) => rows.filter((c): c is TaskComment => c != null));
 
   return {
     task: {
@@ -461,6 +535,7 @@ export async function getTaskDetail(
       pendingSubmissionId,
       comments,
       submissionCount: count ?? 0,
+      attachments,
     },
   };
 }
@@ -881,22 +956,10 @@ export async function requestTaskChanges(taskId: string, comment: string) {
 
 export async function getUnreadNotificationCount(): Promise<number> {
   const profile = await requireProfile();
+  const { getUnreadNotificationCountForProfile } = await import(
+    "@/app/actions/notifications"
+  );
   return getUnreadNotificationCountForProfile(profile);
-}
-
-export async function getUnreadNotificationCountForProfile(
-  profile: Profile,
-): Promise<number> {
-  if (!canAssign(profile.role)) return 0;
-
-  const supabase = await createClient();
-  const { count } = await supabase
-    .from("notifications")
-    .select("id", { count: "exact", head: true })
-    .eq("recipient_id", profile.id)
-    .eq("read", false);
-
-  return count ?? 0;
 }
 
 export async function addTaskComment(taskId: string, body: string) {
@@ -957,6 +1020,104 @@ export async function addTaskComment(taskId: string, body: string) {
       task.reviewer_id,
       taskId,
       `${profile.name} commented on "${task.title}" under review`,
+    );
+  }
+
+  revalidateTaskPaths();
+  return { success: true, comment: mapped };
+}
+
+export async function addTaskVoiceComment(taskId: string, formData: FormData) {
+  const profile = await requireProfile();
+  const body = String(formData.get("body") ?? "").trim();
+  const voice = formData.get("voice");
+
+  if (!(voice instanceof File) || voice.size === 0) {
+    return { error: "No voice recording found." };
+  }
+
+  if (voice.size > MAX_ATTACHMENT_BYTES) {
+    return { error: "Voice note is over 5MB. Record a shorter message." };
+  }
+
+  const supabase = await createClient();
+
+  const { data: task } = await supabase
+    .from("tasks")
+    .select("id, title, assignee_id, reviewer_id, status")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (!task) {
+    return { error: "Task not found." };
+  }
+
+  const extension = voice.type.includes("mp4") ? "m4a" : "webm";
+  const contentType = voice.type.startsWith("audio/")
+    ? voice.type
+    : "audio/webm";
+  const path = `${taskId}/comments/${crypto.randomUUID()}.${extension}`;
+  const buffer = Buffer.from(await voice.arrayBuffer());
+
+  const { error: uploadError } = await supabase.storage
+    .from(TASK_ATTACHMENTS_BUCKET)
+    .upload(path, buffer, {
+      contentType,
+      upsert: false,
+    });
+
+  if (uploadError) {
+    return { error: uploadError.message };
+  }
+
+  const { data: inserted, error } = await supabase
+    .from("task_comments")
+    .insert({
+      task_id: taskId,
+      author_id: profile.id,
+      body: body || "",
+      kind: "voice",
+      voice_path: path,
+      voice_mime_type: contentType,
+      voice_size_bytes: voice.size,
+    })
+    .select(
+      `
+      id, body, kind, voice_path, voice_mime_type, voice_size_bytes, created_at,
+      author:profiles(id, name, role)
+    `,
+    )
+    .single();
+
+  if (error) {
+    await supabase.storage.from(TASK_ATTACHMENTS_BUCKET).remove([path]);
+    return { error: error.message };
+  }
+
+  const { data: playback } = await supabase.storage
+    .from(TASK_ATTACHMENTS_BUCKET)
+    .createSignedUrl(path, 3600);
+
+  const mapped = mapComment(inserted, playback?.signedUrl ?? null);
+  if (!mapped) {
+    return { error: "Voice note saved but could not be loaded." };
+  }
+
+  if (task.assignee_id !== profile.id) {
+    await notifyUser(
+      task.assignee_id,
+      taskId,
+      `${profile.name} sent a voice note on "${task.title}"`,
+    );
+  } else if (
+    task.status === "Under Review" &&
+    task.reviewer_id &&
+    task.reviewer_id !== profile.id
+  ) {
+    await notifyUser(
+      task.reviewer_id,
+      taskId,
+      `${profile.name} sent a voice note on "${task.title}" under review`,
     );
   }
 

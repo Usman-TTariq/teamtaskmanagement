@@ -78,12 +78,25 @@ export type AllTask = BoardTask & {
 export type TaskComment = {
   id: string;
   body: string;
+  kind: "text" | "voice";
   created_at: string;
+  voiceUrl: string | null;
+  voiceMimeType: string | null;
   author: {
     id: string;
     name: string;
     role: UserRole;
   };
+};
+
+export type TaskAttachment = {
+  id: string;
+  file_name: string;
+  kind: "file" | "voice";
+  mime_type: string;
+  size_bytes: number;
+  url: string | null;
+  downloadUrl: string | null;
 };
 
 export type TaskDetail = BoardTask & {
@@ -100,6 +113,7 @@ export type TaskDetail = BoardTask & {
   pendingSubmissionId: string | null;
   comments: TaskComment[];
   submissionCount: number;
+  attachments: TaskAttachment[];
 };
 
 export type DashboardStats = {
@@ -109,4 +123,12 @@ export type DashboardStats = {
   completedThisWeek: number;
   overdueCount: number;
   donePercent: number;
+};
+
+export type AppNotification = {
+  id: string;
+  message: string;
+  task_id: string | null;
+  read: boolean;
+  created_at: string;
 };

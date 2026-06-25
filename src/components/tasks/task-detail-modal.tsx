@@ -5,14 +5,20 @@ import { useRouter } from "next/navigation";
 import {
   Calendar,
   ChevronRight,
+  Download,
   Lock,
   MessageSquare,
+  Mic,
+  Paperclip,
   Pin,
   Send,
+  Square,
+  Trash2,
   X,
 } from "lucide-react";
 import {
   addTaskComment,
+  addTaskVoiceComment,
   approveTask,
   getTaskDetail,
   markTaskNotificationsRead,
@@ -33,6 +39,7 @@ import {
   type TaskStatus,
 } from "@/lib/constants";
 import { canAssign } from "@/lib/permissions";
+import { formatAttachmentSize, MAX_ATTACHMENT_BYTES } from "@/lib/task-attachments";
 import type { Profile, TaskComment, TaskDetail } from "@/lib/types";
 
 type Props = {
@@ -44,6 +51,10 @@ type Props = {
 export function TaskDetailModal({ taskId, profile, onClose }: Props) {
   const router = useRouter();
   const commentsEndRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordTimerRef = useRef<number | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [error, setError] = useState("");
   const [comment, setComment] = useState("");
@@ -51,6 +62,10 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
   const [showChangeForm, setShowChangeForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pending, startTransition] = useTransition();
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [pendingVoice, setPendingVoice] = useState<File | null>(null);
+  const [pendingVoiceUrl, setPendingVoiceUrl] = useState<string | null>(null);
 
   const isLead = canAssign(profile.role);
   const isAssignee = task?.assignee_id === profile.id;
@@ -86,6 +101,7 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
     void (async () => {
       await fetchTask(false);
       await markTaskNotificationsRead(taskId);
+      window.dispatchEvent(new CustomEvent("notifications:refresh"));
       router.refresh();
     })();
   }, [taskId]);
@@ -97,6 +113,26 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!pendingVoice) {
+      setPendingVoiceUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(pendingVoice);
+    setPendingVoiceUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pendingVoice]);
+
+  useEffect(() => {
+    return () => {
+      if (recordTimerRef.current) {
+        window.clearInterval(recordTimerRef.current);
+      }
+      mediaRecorderRef.current?.stop();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
 
   function refreshAfterAction(action: () => Promise<{ error?: string }>) {
     startTransition(async () => {
@@ -114,10 +150,20 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
   function handleCommentSubmit(e: React.FormEvent) {
     e.preventDefault();
     const text = comment.trim();
-    if (!text || !task) return;
+    if ((!text && !pendingVoice) || !task) return;
 
     startTransition(async () => {
-      const result = await addTaskComment(taskId, text);
+      let result: { error?: string; comment?: TaskComment };
+
+      if (pendingVoice) {
+        const formData = new FormData();
+        formData.set("voice", pendingVoice);
+        if (text) formData.set("body", text);
+        result = await addTaskVoiceComment(taskId, formData);
+      } else {
+        result = await addTaskComment(taskId, text);
+      }
+
       if (result.error) {
         setError(result.error);
         return;
@@ -128,12 +174,86 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
           comments: [...task.comments, result.comment as TaskComment],
         });
         setComment("");
+        setPendingVoice(null);
         setError("");
         requestAnimationFrame(() => {
           commentsEndRef.current?.scrollIntoView({ behavior: "smooth" });
         });
       }
     });
+  }
+
+  async function startRecording() {
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      voiceChunksRef.current = [];
+
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "";
+
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+
+        const blob = new Blob(voiceChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+
+        if (!blob.size) return;
+
+        if (blob.size > MAX_ATTACHMENT_BYTES) {
+          setError("Voice note is over 5MB. Record a shorter message.");
+          return;
+        }
+
+        const extension = blob.type.includes("mp4") ? "m4a" : "webm";
+        const file = new File(
+          [blob],
+          `voice-comment-${new Date().toISOString().slice(11, 19).replace(/:/g, "")}.${extension}`,
+          { type: blob.type || "audio/webm" },
+        );
+        setPendingVoice(file);
+      };
+
+      recorder.start();
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = window.setInterval(() => {
+        setRecordSeconds((value) => value + 1);
+      }, 1000);
+    } catch {
+      setError("Microphone access is blocked. Allow mic permission and try again.");
+    }
+  }
+
+  function stopRecording() {
+    if (recordTimerRef.current) {
+      window.clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setRecording(false);
+  }
+
+  function clearPendingVoice() {
+    setPendingVoice(null);
   }
 
   const stepIndex = task
@@ -414,6 +534,72 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                 ) : (
                   <p className="text-sm text-[#9495A3]">No brief provided.</p>
                 )}
+                {task.attachments.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.1em] text-[#9495A3]">
+                      Attachments
+                    </h3>
+                    <ul className="space-y-2">
+                      {task.attachments.map((item) => (
+                        <li
+                          key={item.id}
+                          className={`rounded-xl border border-[#E4E6EF] bg-[#FAFBFD] px-3 py-2.5 ${
+                            item.kind === "voice" ? "space-y-2" : ""
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              {item.kind === "voice" ? (
+                                <Mic size={14} className="shrink-0 text-[#E11D2A]" />
+                              ) : (
+                                <Paperclip
+                                  size={14}
+                                  className="shrink-0 text-[#6B6C7A]"
+                                />
+                              )}
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-[#14141A]">
+                                  {item.kind === "voice"
+                                    ? "Voice brief"
+                                    : item.file_name}
+                                </p>
+                                <p className="text-[11px] text-[#9495A3]">
+                                  {formatAttachmentSize(item.size_bytes)}
+                                </p>
+                              </div>
+                            </div>
+                            {item.kind === "file" && (item.downloadUrl || item.url) && (
+                              <a
+                                href={item.downloadUrl ?? item.url ?? "#"}
+                                download={item.file_name}
+                                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#E4E6EF] bg-white px-3 py-1.5 text-xs font-bold text-[#14141A] hover:bg-[#F4F5FA]"
+                              >
+                                <Download size={13} />
+                                Download
+                              </a>
+                            )}
+                          </div>
+                          {item.kind === "voice" && item.url ? (
+                            <audio
+                              controls
+                              controlsList="nodownload"
+                              preload="metadata"
+                              className="h-10 w-full"
+                            >
+                              <source src={item.url} type={item.mime_type} />
+                              <source src={item.url} type="audio/webm" />
+                              Your browser does not support audio playback.
+                            </audio>
+                          ) : item.kind === "voice" ? (
+                            <span className="text-[11px] font-semibold text-[#9495A3]">
+                              Playback unavailable
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {task.submissionCount > 0 && (
                   <p className="mt-4 text-xs font-semibold text-[#9495A3]">
                     {task.submissionCount} submission
@@ -452,6 +638,56 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                   onSubmit={handleCommentSubmit}
                   className="shrink-0 border-t border-[#E4E6EF] bg-[#FAFBFD] px-4 py-3"
                 >
+                  {pendingVoice && pendingVoiceUrl && (
+                    <div className="mb-2 rounded-xl border border-[#E4E6EF] bg-white px-3 py-2">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Mic size={14} className="text-[#E11D2A]" />
+                          <span className="text-xs font-semibold text-[#14141A]">
+                            Voice note
+                          </span>
+                          <span className="text-[11px] text-[#9495A3]">
+                            {formatAttachmentSize(pendingVoice.size)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={clearPendingVoice}
+                          className="grid h-7 w-7 place-items-center rounded-lg text-[#9495A3] hover:bg-[#FDE7EA] hover:text-[#E11D2A]"
+                          aria-label="Remove voice note"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      <audio
+                        controls
+                        controlsList="nodownload"
+                        preload="metadata"
+                        className="h-9 w-full"
+                      >
+                        <source
+                          src={pendingVoiceUrl}
+                          type={pendingVoice.type || "audio/webm"}
+                        />
+                      </audio>
+                    </div>
+                  )}
+                  {recording && (
+                    <div className="mb-2 flex items-center justify-between rounded-xl border border-[#E11D2A] bg-[#FFF5F6] px-3 py-2">
+                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-[#E11D2A]">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-[#E11D2A]" />
+                        Recording… {recordSeconds}s
+                      </span>
+                      <button
+                        type="button"
+                        onClick={stopRecording}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#E11D2A] px-2.5 py-1 text-[11px] font-bold text-white"
+                      >
+                        <Square size={11} fill="currentColor" />
+                        Stop
+                      </button>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <input
                       value={comment}
@@ -459,9 +695,29 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                       placeholder="Write a comment…"
                       className="min-w-0 flex-1 rounded-xl border border-[#E4E6EF] bg-white px-3 py-2 text-sm outline-none focus:border-[#E11D2A]"
                     />
+                    {recording ? (
+                      <button
+                        type="button"
+                        onClick={stopRecording}
+                        className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#E11D2A] bg-[#FFF5F6] text-[#E11D2A]"
+                        aria-label="Stop recording"
+                      >
+                        <Square size={14} fill="currentColor" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={startRecording}
+                        disabled={pending}
+                        className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#E4E6EF] bg-white text-[#6B6C7A] transition hover:border-[#E11D2A] hover:bg-[#FFF5F6] hover:text-[#E11D2A] disabled:opacity-60"
+                        aria-label="Record voice note"
+                      >
+                        <Mic size={15} />
+                      </button>
+                    )}
                     <button
                       type="submit"
-                      disabled={pending || !comment.trim()}
+                      disabled={pending || (!comment.trim() && !pendingVoice)}
                       className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] text-white disabled:opacity-60"
                     >
                       <Send size={15} />
@@ -509,7 +765,27 @@ function CommentBubble({ item }: { item: TaskComment }) {
           {formatCommentTime(item.created_at)}
         </span>
       </div>
-      <p className="text-sm leading-relaxed text-[#6B6C7A]">{item.body}</p>
+      {item.body ? (
+        <p className="text-sm leading-relaxed text-[#6B6C7A]">{item.body}</p>
+      ) : null}
+      {item.kind === "voice" && item.voiceUrl && (
+        <div className="mt-2 space-y-1">
+          {!item.body && (
+            <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#9495A3]">
+              <Mic size={12} className="text-[#E11D2A]" />
+              Voice note
+            </p>
+          )}
+          <audio
+            controls
+            controlsList="nodownload"
+            preload="metadata"
+            className="h-9 w-full"
+          >
+            <source src={item.voiceUrl} type={item.voiceMimeType ?? "audio/webm"} />
+          </audio>
+        </div>
+      )}
     </div>
   );
 }

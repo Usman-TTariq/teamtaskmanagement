@@ -1,0 +1,481 @@
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  Bell,
+  CheckCircle2,
+  ClipboardList,
+  MessageSquare,
+  Mic,
+  X,
+} from "lucide-react";
+import {
+  getRecentNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from "@/app/actions/notifications";
+import { useTaskDetailOptional } from "@/components/tasks/task-detail-context";
+import { createClient } from "@/lib/supabase/client";
+import type { AppNotification } from "@/lib/types";
+
+type ToastItem = AppNotification & { visible: boolean };
+
+type NotificationContextValue = {
+  unreadCount: number;
+  panelOpen: boolean;
+  notifications: AppNotification[];
+  panelLoading: boolean;
+  togglePanel: () => void;
+  closePanel: () => void;
+  openNotification: (notification: AppNotification) => Promise<void>;
+  markAllRead: () => Promise<void>;
+};
+
+const NotificationContext = createContext<NotificationContextValue | null>(null);
+
+export function useNotifications() {
+  const ctx = useContext(NotificationContext);
+  if (!ctx) {
+    throw new Error("useNotifications must be used within NotificationProvider");
+  }
+  return ctx;
+}
+
+function notificationIcon(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes("assigned you")) return ClipboardList;
+  if (lower.includes("voice note")) return Mic;
+  if (lower.includes("commented") || lower.includes("comment")) return MessageSquare;
+  if (lower.includes("approved")) return CheckCircle2;
+  return Bell;
+}
+
+function formatNotificationTime(iso: string) {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+type Props = {
+  profileId: string;
+  initialUnreadCount: number;
+  children: React.ReactNode;
+};
+
+export function NotificationProvider({
+  profileId,
+  initialUnreadCount,
+  children,
+}: Props) {
+  const taskDetail = useTaskDetailOptional();
+  const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelLoading, setPanelLoading] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const knownIdsRef = useRef<Set<string>>(new Set());
+  const initializedRef = useRef(false);
+  const dismissTimersRef = useRef<Map<string, number>>(new Map());
+
+  const syncUnreadCount = useCallback((items: AppNotification[]) => {
+    setUnreadCount(items.filter((item) => !item.read).length);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    const timer = dismissTimersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      dismissTimersRef.current.delete(id);
+    }
+    setToasts((current) => current.filter((item) => item.id !== id));
+  }, []);
+
+  const pushToast = useCallback(
+    (notification: AppNotification) => {
+      setToasts((current) => {
+        if (current.some((item) => item.id === notification.id)) {
+          return current;
+        }
+        return [{ ...notification, visible: true }, ...current].slice(0, 4);
+      });
+
+      const timer = window.setTimeout(() => {
+        dismissToast(notification.id);
+      }, 7000);
+      dismissTimersRef.current.set(notification.id, timer);
+    },
+    [dismissToast],
+  );
+
+  const openNotification = useCallback(
+    async (notification: AppNotification) => {
+      dismissToast(notification.id);
+      setPanelOpen(false);
+
+      if (!notification.read) {
+        await markNotificationRead(notification.id);
+        setNotifications((current) =>
+          current.map((item) =>
+            item.id === notification.id ? { ...item, read: true } : item,
+          ),
+        );
+        setUnreadCount((count) => Math.max(0, count - 1));
+      }
+
+      if (notification.task_id) {
+        taskDetail?.openTaskDetail(notification.task_id);
+      }
+    },
+    [dismissToast, taskDetail],
+  );
+
+  const closePanel = useCallback(() => {
+    setPanelOpen(false);
+  }, []);
+
+  const refreshNotifications = useCallback(
+    async (showPopups: boolean) => {
+      const items = await getRecentNotifications();
+      setNotifications(items);
+      syncUnreadCount(items);
+
+      if (!initializedRef.current) {
+        items.forEach((item) => knownIdsRef.current.add(item.id));
+        initializedRef.current = true;
+        return items;
+      }
+
+      const newItems = items.filter((item) => !knownIdsRef.current.has(item.id));
+      for (const item of newItems) {
+        knownIdsRef.current.add(item.id);
+        if (showPopups && !item.read) {
+          pushToast(item);
+        }
+      }
+
+      return items;
+    },
+    [pushToast, syncUnreadCount],
+  );
+
+  const togglePanel = useCallback(() => {
+    setPanelOpen((open) => {
+      const next = !open;
+      if (next) {
+        setPanelLoading(true);
+        void refreshNotifications(false).finally(() => setPanelLoading(false));
+      }
+      return next;
+    });
+  }, [refreshNotifications]);
+
+  const markAllRead = useCallback(async () => {
+    const result = await markAllNotificationsRead();
+    if (result.error) return;
+
+    setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+    setUnreadCount(0);
+    window.dispatchEvent(new CustomEvent("notifications:refresh"));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function poll() {
+      if (!cancelled) {
+        await refreshNotifications(true);
+      }
+    }
+
+    void poll();
+    const interval = window.setInterval(poll, 20000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [refreshNotifications]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`notifications:${profileId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: `recipient_id=eq.${profileId}`,
+        },
+        (payload) => {
+          const notification = payload.new as AppNotification;
+          if (knownIdsRef.current.has(notification.id)) return;
+          knownIdsRef.current.add(notification.id);
+          setNotifications((current) => [notification, ...current].slice(0, 30));
+          if (!notification.read) {
+            pushToast(notification);
+            setUnreadCount((count) => count + 1);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+      dismissTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      dismissTimersRef.current.clear();
+    };
+  }, [profileId, pushToast]);
+
+  useEffect(() => {
+    function onFocus() {
+      void refreshNotifications(false);
+    }
+    function onRefresh() {
+      void refreshNotifications(false);
+    }
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("notifications:refresh", onRefresh);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("notifications:refresh", onRefresh);
+    };
+  }, [refreshNotifications]);
+
+  return (
+    <NotificationContext.Provider
+      value={{
+        unreadCount,
+        panelOpen,
+        notifications,
+        panelLoading,
+        togglePanel,
+        closePanel,
+        openNotification,
+        markAllRead,
+      }}
+    >
+      {children}
+      <div
+        aria-live="polite"
+        className="pointer-events-none fixed bottom-6 right-6 z-[80] flex w-[min(100vw-2rem,380px)] flex-col gap-3"
+      >
+        {toasts.map((toast) => {
+          const Icon = notificationIcon(toast.message);
+          return (
+            <div
+              key={toast.id}
+              className="pointer-events-auto animate-[slideInRight_.35s_ease-out] overflow-hidden rounded-2xl border border-[#E4E6EF] bg-white shadow-[0_12px_40px_rgba(20,20,40,.16)]"
+            >
+              <div className="flex gap-3 p-4">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] text-white">
+                  <Icon size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#9495A3]">
+                    New notification
+                  </p>
+                  <p className="mt-1 text-sm font-semibold leading-snug text-[#14141A]">
+                    {toast.message}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    {toast.task_id && (
+                      <button
+                        type="button"
+                        onClick={() => void openNotification(toast)}
+                        className="rounded-lg bg-[#14141A] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2A2A36]"
+                      >
+                        View task
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        dismissToast(toast.id);
+                        if (!toast.read) {
+                          void markNotificationRead(toast.id);
+                          setUnreadCount((count) => Math.max(0, count - 1));
+                          setNotifications((current) =>
+                            current.map((item) =>
+                              item.id === toast.id ? { ...item, read: true } : item,
+                            ),
+                          );
+                        }
+                      }}
+                      className="rounded-lg border border-[#E4E6EF] px-3 py-1.5 text-xs font-bold text-[#6B6C7A] transition hover:bg-[#F4F5FA]"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => dismissToast(toast.id)}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[#9495A3] transition hover:bg-[#F4F5FA] hover:text-[#14141A]"
+                  aria-label="Close notification"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </NotificationContext.Provider>
+  );
+}
+
+export function NotificationBell() {
+  const {
+    unreadCount,
+    panelOpen,
+    notifications,
+    panelLoading,
+    togglePanel,
+    closePanel,
+    openNotification,
+    markAllRead,
+  } = useNotifications();
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!panelOpen) return;
+
+    function onPointerDown(event: MouseEvent) {
+      if (!panelRef.current?.contains(event.target as Node)) {
+        closePanel();
+      }
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closePanel();
+      }
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [panelOpen, closePanel]);
+
+  return (
+    <div ref={panelRef} className="relative">
+      <button
+        type="button"
+        onClick={togglePanel}
+        aria-expanded={panelOpen}
+        aria-haspopup="true"
+        className={`relative grid h-10 w-10 place-items-center rounded-xl border transition ${
+          panelOpen
+            ? "border-[#E11D2A] bg-[#FFF5F6] text-[#E11D2A]"
+            : "border-[#E4E6EF] text-[#6B6C7A] hover:bg-[#F4F5FA] hover:text-[#14141A]"
+        }`}
+        aria-label="Notifications"
+      >
+        <Bell size={18} />
+        {unreadCount > 0 && (
+          <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-[#E11D2A] px-1 text-[10px] font-extrabold text-white">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {panelOpen && (
+        <div className="absolute right-0 top-[calc(100%+0.5rem)] z-[90] w-[min(100vw-2rem,360px)] overflow-hidden rounded-2xl border border-[#E4E6EF] bg-white shadow-[0_16px_48px_rgba(20,20,40,.18)]">
+          <div className="flex items-center justify-between border-b border-[#E4E6EF] px-4 py-3">
+            <div>
+              <h3 className="text-sm font-extrabold text-[#14141A]">Notifications</h3>
+              {unreadCount > 0 && (
+                <p className="text-[11px] font-semibold text-[#9495A3]">
+                  {unreadCount} unread
+                </p>
+              )}
+            </div>
+            {unreadCount > 0 && (
+              <button
+                type="button"
+                onClick={() => void markAllRead()}
+                className="text-[11px] font-bold text-[#E11D2A] transition hover:text-[#C01824]"
+              >
+                Mark all read
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-[min(60vh,420px)] overflow-y-auto">
+            {panelLoading ? (
+              <p className="px-4 py-8 text-center text-sm font-semibold text-[#9495A3]">
+                Loading…
+              </p>
+            ) : notifications.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-[#9495A3]">
+                No notifications yet.
+              </p>
+            ) : (
+              <ul className="divide-y divide-[#EEF1F6]">
+                {notifications.map((item) => {
+                  const Icon = notificationIcon(item.message);
+                  return (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => void openNotification(item)}
+                        className={`flex w-full gap-3 px-4 py-3 text-left transition hover:bg-[#FAFBFD] ${
+                          !item.read ? "bg-[#FFF8F9]" : ""
+                        }`}
+                      >
+                        <div
+                          className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${
+                            !item.read
+                              ? "bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] text-white"
+                              : "bg-[#F4F5FA] text-[#6B6C7A]"
+                          }`}
+                        >
+                          <Icon size={16} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className={`text-sm leading-snug ${
+                              !item.read
+                                ? "font-bold text-[#14141A]"
+                                : "font-semibold text-[#6B6C7A]"
+                            }`}
+                          >
+                            {item.message}
+                          </p>
+                          <p className="mt-1 text-[11px] font-semibold text-[#9495A3]">
+                            {formatNotificationTime(item.created_at)}
+                          </p>
+                        </div>
+                        {!item.read && (
+                          <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[#E11D2A]" />
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

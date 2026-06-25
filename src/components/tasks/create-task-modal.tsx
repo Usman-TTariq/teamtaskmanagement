@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Lock,
@@ -8,9 +8,12 @@ import {
   Paperclip,
   Pin,
   Plus,
+  Square,
+  Trash2,
   X,
 } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
+import { uploadTaskAttachmentsAction } from "@/app/actions/task-attachments";
 import {
   CATEGORIES,
   COLORS,
@@ -18,6 +21,11 @@ import {
   type TaskCategory,
   type TaskPriority,
 } from "@/lib/constants";
+import {
+  formatAttachmentSize,
+  MAX_ATTACHMENT_BYTES,
+  type PendingAttachment,
+} from "@/lib/task-attachments";
 import type { Brand, Profile } from "@/lib/types";
 
 type Props = {
@@ -54,7 +62,16 @@ export function CreateTaskModal({
   const [estimatedHours, setEstimatedHours] = useState("");
   const [pinned, setPinned] = useState(false);
   const [hidden, setHidden] = useState(false);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
   const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordTimerRef = useRef<number | null>(null);
+  const voiceChunksRef = useRef<BlobPart[]>([]);
 
   useEffect(() => {
     if (presetAssigneeId) {
@@ -70,7 +87,127 @@ export function CreateTaskModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    const urls = Object.fromEntries(
+      attachments.map((item) => [item.id, URL.createObjectURL(item.file)]),
+    );
+    setPreviewUrls(urls);
+
+    return () => {
+      Object.values(urls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [attachments]);
+
+  useEffect(() => {
+    return () => {
+      if (recordTimerRef.current) {
+        window.clearInterval(recordTimerRef.current);
+      }
+      mediaRecorderRef.current?.stop();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
   const assignee = members.find((m) => m.id === assigneeId);
+
+  function addFiles(fileList: FileList | null) {
+    if (!fileList?.length) return;
+
+    const next: PendingAttachment[] = [];
+    for (const file of Array.from(fileList)) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setError(`"${file.name}" is over 5MB.`);
+        continue;
+      }
+      next.push({
+        id: crypto.randomUUID(),
+        file,
+        kind: "file",
+      });
+    }
+
+    if (next.length) {
+      setAttachments((current) => [...current, ...next]);
+      setError("");
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) => current.filter((item) => item.id !== id));
+  }
+
+  async function startRecording() {
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      voiceChunksRef.current = [];
+
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "";
+
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+
+        const blob = new Blob(voiceChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+
+        if (!blob.size) return;
+
+        if (blob.size > MAX_ATTACHMENT_BYTES) {
+          setError("Voice recording is over 5MB. Record a shorter brief.");
+          return;
+        }
+
+        const extension = blob.type.includes("mp4") ? "m4a" : "webm";
+        const file = new File(
+          [blob],
+          `voice-brief-${new Date().toISOString().slice(11, 19).replace(/:/g, "")}.${extension}`,
+          { type: blob.type || "audio/webm" },
+        );
+
+        setAttachments((current) => [
+          ...current,
+          { id: crypto.randomUUID(), file, kind: "voice" },
+        ]);
+      };
+
+      recorder.start();
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = window.setInterval(() => {
+        setRecordSeconds((value) => value + 1);
+      }, 1000);
+    } catch {
+      setError("Microphone access is blocked. Allow mic permission and try again.");
+    }
+  }
+
+  function stopRecording() {
+    if (recordTimerRef.current) {
+      window.clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setRecording(false);
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -97,6 +234,19 @@ export function CreateTaskModal({
       if (result.error) {
         setError(result.error);
         return;
+      }
+
+      if (attachments.length && result.taskId) {
+        const formData = new FormData();
+        attachments.forEach((item, index) => {
+          formData.append("files", item.file, item.file.name);
+          formData.append(`kind:${index}`, item.kind);
+        });
+        const upload = await uploadTaskAttachmentsAction(result.taskId, formData);
+        if (upload.error) {
+          setError(`Task created, but attachments failed: ${upload.error}`);
+          return;
+        }
       }
 
       onClose();
@@ -282,30 +432,104 @@ export function CreateTaskModal({
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className={labelClass}>Brief attachments</label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
                 <button
                   type="button"
-                  disabled
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8DBE8] bg-[#FAFBFD] px-3 py-2.5 text-sm font-semibold text-[#9495A3]"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8DBE8] bg-[#FAFBFD] px-3 py-2.5 text-sm font-semibold text-[#14141A] transition hover:border-[#E11D2A] hover:bg-[#FFF5F6]"
                 >
                   <Paperclip size={15} />
                   Add files
                 </button>
                 <p className="mt-1.5 text-[11px] text-[#9495A3]">
-                  5MB per file, any type. (Coming in Phase 4)
+                  5MB per file, any type.
                 </p>
               </div>
               <div>
                 <label className={labelClass}>Voice brief</label>
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8DBE8] bg-[#FAFBFD] px-3 py-2.5 text-sm font-semibold text-[#9495A3]"
-                >
-                  <Mic size={15} />
-                  Record voice
-                </button>
+                {recording ? (
+                  <button
+                    type="button"
+                    onClick={stopRecording}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#E11D2A] bg-[#FFF5F6] px-3 py-2.5 text-sm font-semibold text-[#E11D2A]"
+                  >
+                    <Square size={14} fill="currentColor" />
+                    Stop ({recordSeconds}s)
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startRecording}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#D8DBE8] bg-[#FAFBFD] px-3 py-2.5 text-sm font-semibold text-[#14141A] transition hover:border-[#E11D2A] hover:bg-[#FFF5F6]"
+                  >
+                    <Mic size={15} />
+                    Record voice
+                  </button>
+                )}
+                <p className="mt-1.5 text-[11px] text-[#9495A3]">
+                  Tap to record a short voice note for the assignee.
+                </p>
               </div>
             </div>
+
+            {attachments.length > 0 && (
+              <div className="rounded-xl border border-[#E4E6EF] bg-[#FAFBFD] p-3">
+                <p className="mb-2 text-[11px] font-extrabold uppercase tracking-wide text-[#9495A3]">
+                  Attached ({attachments.length})
+                </p>
+                <ul className="space-y-2">
+                  {attachments.map((item) => (
+                    <li
+                      key={item.id}
+                      className={`rounded-lg bg-white px-3 py-2 ${
+                        item.kind === "voice" ? "space-y-2" : ""
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-[#14141A]">
+                            {item.kind === "voice" ? "Voice brief" : item.file.name}
+                          </p>
+                          <p className="text-[11px] text-[#9495A3]">
+                            {formatAttachmentSize(item.file.size)}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(item.id)}
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#9495A3] hover:bg-[#FDE7EA] hover:text-[#E11D2A]"
+                          aria-label="Remove attachment"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      {item.kind === "voice" && previewUrls[item.id] && (
+                        <audio
+                          controls
+                          controlsList="nodownload"
+                          preload="metadata"
+                          className="h-9 w-full"
+                        >
+                          <source
+                            src={previewUrls[item.id]}
+                            type={item.file.type || "audio/webm"}
+                          />
+                        </audio>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {error && (
