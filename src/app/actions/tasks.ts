@@ -1,11 +1,13 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import type { TaskCategory, TaskPriority, TaskStatus, UserRole } from "@/lib/constants";
 import { requireLead, requireProfile } from "@/lib/auth-guard";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTeamProfiles } from "@/lib/team-profiles";
+import { uploadAttachmentsForTask } from "@/app/actions/task-attachments";
 import { TASK_ATTACHMENTS_BUCKET, MAX_ATTACHMENT_BYTES } from "@/lib/task-attachments";
 import { canAssign } from "@/lib/permissions";
 import type { Brand, AllTask, BoardTask, DashboardStats, Profile, TaskComment, TaskDetail, TeamMemberWorkload } from "@/lib/types";
@@ -182,6 +184,13 @@ export async function getTeamWorkload(): Promise<TeamMemberWorkload[]> {
 }
 
 export async function createTask(input: CreateTaskInput) {
+  return createTaskWithAttachments(input, null);
+}
+
+export async function createTaskWithAttachments(
+  input: CreateTaskInput,
+  attachmentFormData: FormData | null,
+) {
   const creator = await requireLead();
   const supabase = await createClient();
 
@@ -226,28 +235,41 @@ export async function createTask(input: CreateTaskInput) {
     };
   }
 
-  await supabase.from("activity_log").insert({
-    task_id: task.id,
-    user_id: creator.id,
-    action_type: "created",
-    description: `Created task "${title}"`,
+  const taskId = task.id;
+  const assigneeId = input.assigneeId;
+  const hasAttachments =
+    attachmentFormData != null &&
+    attachmentFormData.getAll("files").some(
+      (entry) => entry instanceof File && entry.size > 0,
+    );
+
+  after(async () => {
+    const admin = createAdminClient();
+    try {
+      await Promise.all([
+        admin.from("activity_log").insert({
+          task_id: taskId,
+          user_id: creator.id,
+          action_type: "created",
+          description: `Created task "${title}"`,
+        }),
+        assigneeId !== creator.id
+          ? notifyUser(
+              assigneeId,
+              taskId,
+              `${creator.name} assigned you "${title}"`,
+            )
+          : Promise.resolve(),
+        hasAttachments
+          ? uploadAttachmentsForTask(taskId, creator.id, attachmentFormData!)
+          : Promise.resolve(),
+      ]);
+    } finally {
+      revalidateTaskPaths();
+    }
   });
 
-  if (input.assigneeId !== creator.id) {
-    await notifyUser(
-      input.assigneeId,
-      task.id,
-      `${creator.name} assigned you "${title}"`,
-    );
-  }
-
-  revalidatePath("/team");
-  revalidatePath("/");
-  revalidatePath("/board");
-  revalidatePath("/all");
-  revalidatePath("/mine");
-
-  return { success: true, taskId: task.id };
+  return { success: true, taskId };
 }
 
 export async function getMyTasks(): Promise<BoardTask[]> {

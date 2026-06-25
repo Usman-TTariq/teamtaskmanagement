@@ -1,16 +1,21 @@
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { ResetPasswordForm } from "@/components/auth/reset-password-form";
-import { createClient } from "@/lib/supabase/server";
+import { ResetPasswordGate } from "@/components/auth/reset-password-gate";
 
-export default async function ResetPasswordPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login?error=session_expired");
-  }
-
-  return <ResetPasswordForm />;
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(1200px_500px_at_50%_-10%,#1A1320_0%,#0A0A10_55%)] p-6">
+          <p className="text-sm font-semibold text-[#8A8B99]">
+            Verifying reset link…
+          </p>
+        </div>
+      }
+    >
+      <ResetPasswordGate>
+        <ResetPasswordForm />
+      </ResetPasswordGate>
+    </Suspense>
+  );
 }

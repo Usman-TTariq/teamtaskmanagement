@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Lock,
@@ -12,8 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { createTask } from "@/app/actions/tasks";
-import { uploadTaskAttachmentsAction } from "@/app/actions/task-attachments";
+import { createTaskWithAttachments } from "@/app/actions/tasks";
 import {
   CATEGORIES,
   COLORS,
@@ -49,7 +48,6 @@ export function CreateTaskModal({
   onClose,
 }: Props) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [brandId, setBrandId] = useState(brands[0]?.id ?? "");
@@ -213,45 +211,65 @@ export function CreateTaskModal({
     e.preventDefault();
     setError("");
 
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setError("Title is required.");
+      return;
+    }
+    if (!assigneeId) {
+      setError("Choose who to assign this task to.");
+      return;
+    }
+    if (!brandId) {
+      setError("Choose a brand.");
+      return;
+    }
+
     const hours = estimatedHours.trim()
       ? Number.parseFloat(estimatedHours)
       : null;
 
-    startTransition(async () => {
-      const result = await createTask({
-        title,
-        description,
-        brandId,
-        category,
-        assigneeId,
-        priority,
-        deadline: deadline || null,
-        estimatedHours: hours != null && !Number.isNaN(hours) ? hours : null,
-        pinned,
-        hidden,
+    let attachmentFormData: FormData | null = null;
+    if (attachments.length) {
+      attachmentFormData = new FormData();
+      attachments.forEach((item, index) => {
+        attachmentFormData!.append("files", item.file, item.file.name);
+        attachmentFormData!.append(`kind:${index}`, item.kind);
       });
+    }
+
+    const payload = {
+      title: trimmedTitle,
+      description,
+      brandId,
+      category,
+      assigneeId,
+      priority,
+      deadline: deadline || null,
+      estimatedHours: hours != null && !Number.isNaN(hours) ? hours : null,
+      pinned,
+      hidden,
+    };
+
+    onClose();
+
+    void (async () => {
+      const result = await createTaskWithAttachments(payload, attachmentFormData);
 
       if (result.error) {
-        setError(result.error);
+        window.dispatchEvent(
+          new CustomEvent("app:toast", {
+            detail: {
+              message: result.error,
+              variant: "error",
+            },
+          }),
+        );
         return;
       }
 
-      if (attachments.length && result.taskId) {
-        const formData = new FormData();
-        attachments.forEach((item, index) => {
-          formData.append("files", item.file, item.file.name);
-          formData.append(`kind:${index}`, item.kind);
-        });
-        const upload = await uploadTaskAttachmentsAction(result.taskId, formData);
-        if (upload.error) {
-          setError(`Task created, but attachments failed: ${upload.error}`);
-          return;
-        }
-      }
-
-      onClose();
       router.refresh();
-    });
+    })();
   }
 
   return (
@@ -546,11 +564,10 @@ export function CreateTaskModal({
             </button>
             <button
               type="submit"
-              disabled={pending}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/25 disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-500/25"
             >
               <Plus size={16} strokeWidth={2.5} />
-              {pending ? "Creating…" : "Create task"}
+              Create task
             </button>
           </div>
         </form>

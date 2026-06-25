@@ -27,6 +27,13 @@ import type { AppNotification } from "@/lib/types";
 
 type ToastItem = AppNotification & { visible: boolean };
 
+type AppToastItem = {
+  id: string;
+  message: string;
+  variant: "error" | "success";
+  visible: boolean;
+};
+
 type NotificationContextValue = {
   unreadCount: number;
   panelOpen: boolean;
@@ -86,6 +93,7 @@ export function NotificationProvider({
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelLoading, setPanelLoading] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [appToasts, setAppToasts] = useState<AppToastItem[]>([]);
   const knownIdsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
   const dismissTimersRef = useRef<Map<string, number>>(new Map());
@@ -256,6 +264,26 @@ export function NotificationProvider({
     };
   }, [refreshNotifications]);
 
+  useEffect(() => {
+    function onAppToast(event: Event) {
+      const detail = (event as CustomEvent<{ message: string; variant?: "error" | "success" }>).detail;
+      if (!detail?.message) return;
+
+      const id = crypto.randomUUID();
+      setAppToasts((current) => [
+        { id, message: detail.message, variant: detail.variant ?? "error", visible: true },
+        ...current,
+      ].slice(0, 3));
+
+      window.setTimeout(() => {
+        setAppToasts((current) => current.filter((item) => item.id !== id));
+      }, 6000);
+    }
+
+    window.addEventListener("app:toast", onAppToast);
+    return () => window.removeEventListener("app:toast", onAppToast);
+  }, []);
+
   return (
     <NotificationContext.Provider
       value={{
@@ -334,6 +362,36 @@ export function NotificationProvider({
             </div>
           );
         })}
+        {appToasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`pointer-events-auto animate-[slideInRight_.35s_ease-out] overflow-hidden rounded-2xl border bg-white shadow-[0_12px_40px_rgba(20,20,40,.16)] ${
+              toast.variant === "error"
+                ? "border-[#FECACA] bg-[#FFF5F6]"
+                : "border-[#E4E6EF]"
+            }`}
+          >
+            <div className="flex items-start gap-3 p-4">
+              <p
+                className={`min-w-0 flex-1 text-sm font-semibold leading-snug ${
+                  toast.variant === "error" ? "text-[#E11D2A]" : "text-[#14141A]"
+                }`}
+              >
+                {toast.message}
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  setAppToasts((current) => current.filter((item) => item.id !== toast.id))
+                }
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[#9495A3] transition hover:bg-[#F4F5FA] hover:text-[#14141A]"
+                aria-label="Close message"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
     </NotificationContext.Provider>
   );
