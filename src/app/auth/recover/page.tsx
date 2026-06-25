@@ -1,24 +1,89 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { BrandLogo } from "@/components/ui/brand-logo";
 
+type Status = "loading" | "error";
+
 function RecoverForm() {
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const formRef = useRef<HTMLFormElement>(null);
-  const tokenHash = searchParams.get("token_hash");
-  const type = searchParams.get("type") ?? "recovery";
-  const code = searchParams.get("code");
+  const startedRef = useRef(false);
+  const [status, setStatus] = useState<Status>("loading");
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (tokenHash || code) {
-      formRef.current?.requestSubmit();
-    }
-  }, [tokenHash, code]);
+    if (startedRef.current) return;
+    startedRef.current = true;
 
-  if (!tokenHash && !code) {
+    async function verifyLink() {
+      const supabase = createClient();
+
+      const hash = window.location.hash.startsWith("#")
+        ? window.location.hash.slice(1)
+        : "";
+      if (hash) {
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get("access_token");
+        const refreshToken = params.get("refresh_token");
+        if (accessToken && refreshToken) {
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (!sessionError) {
+            window.history.replaceState(null, "", "/auth/recover");
+            router.replace("/reset-password");
+            return;
+          }
+          setError(sessionError.message);
+          setStatus("error");
+          return;
+        }
+      }
+
+      const tokenHash = searchParams.get("token_hash");
+      const type = searchParams.get("type") ?? "recovery";
+      if (tokenHash) {
+        const { error: otpError } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: type as "recovery",
+        });
+        if (!otpError) {
+          router.replace("/reset-password");
+          return;
+        }
+        setError(otpError.message);
+        setStatus("error");
+        return;
+      }
+
+      const code = searchParams.get("code");
+      if (code) {
+        const { error: codeError } =
+          await supabase.auth.exchangeCodeForSession(code);
+        if (!codeError) {
+          router.replace("/reset-password");
+          return;
+        }
+        setError(
+          "This reset link could not be verified. Request a new link from the forgot-password page.",
+        );
+        setStatus("error");
+        return;
+      }
+
+      setError("This reset link is invalid or has expired.");
+      setStatus("error");
+    }
+
+    void verifyLink();
+  }, [router, searchParams]);
+
+  if (status === "error") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(1200px_500px_at_50%_-10%,#1A1320_0%,#0A0A10_55%)] p-6">
         <div className="w-full max-w-md text-center">
@@ -28,9 +93,7 @@ function RecoverForm() {
             tagline="Team Tasks Manager"
             textClassName="text-white"
           />
-          <p className="mt-6 text-sm font-semibold text-[#E11D2A]">
-            This reset link is invalid or has expired.
-          </p>
+          <p className="mt-6 text-sm font-semibold text-[#E11D2A]">{error}</p>
           <Link
             href="/forgot-password"
             className="mt-4 inline-block text-sm font-semibold text-white hover:underline"
@@ -54,21 +117,6 @@ function RecoverForm() {
         <p className="mt-6 text-sm font-semibold text-[#8A8B99]">
           Verifying your reset link…
         </p>
-        <form ref={formRef} method="POST" action="/auth/recover/confirm" className="mt-4">
-          {tokenHash && (
-            <input type="hidden" name="token_hash" value={tokenHash} />
-          )}
-          {type && <input type="hidden" name="type" value={type} />}
-          {code && <input type="hidden" name="code" value={code} />}
-          <noscript>
-            <button
-              type="submit"
-              className="rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] px-5 py-2.5 text-sm font-bold text-white"
-            >
-              Continue to reset password
-            </button>
-          </noscript>
-        </form>
       </div>
     </div>
   );
