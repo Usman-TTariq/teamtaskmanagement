@@ -105,7 +105,9 @@ function parseNotificationContent(message: string): ParsedNotification {
     };
   }
 
-  const feedbackMatch = message.match(/^(.+?) sent feedback on "(.+?)": (.+)$/s);
+  const feedbackMatch = message.match(
+    /^(.+?) sent feedback on "(.+?)": ([\s\S]+)$/,
+  );
   if (feedbackMatch) {
     return {
       senderName: feedbackMatch[1],
@@ -114,7 +116,9 @@ function parseNotificationContent(message: string): ParsedNotification {
     };
   }
 
-  const legacyFeedbackMatch = message.match(/^Changes requested on "(.+?)": (.+)$/s);
+  const legacyFeedbackMatch = message.match(
+    /^Changes requested on "(.+?)": ([\s\S]+)$/,
+  );
   if (legacyFeedbackMatch) {
     return {
       senderName: null,
@@ -123,7 +127,7 @@ function parseNotificationContent(message: string): ParsedNotification {
     };
   }
 
-  const replyMatch = message.match(/^(.+?) replied on "(.+?)": (.+)$/s);
+  const replyMatch = message.match(/^(.+?) replied on "(.+?)": ([\s\S]+)$/);
   if (replyMatch) {
     return {
       senderName: replyMatch[1],
