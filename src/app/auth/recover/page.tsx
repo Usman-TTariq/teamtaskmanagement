@@ -20,7 +20,16 @@ function RecoverForm() {
     startedRef.current = true;
 
     async function verifyLink() {
-      const supabase = createClient();
+      const errorCode = searchParams.get("error");
+      if (errorCode) {
+        setError(
+          errorCode === "auth_callback_failed"
+            ? "This reset link could not be verified. Request a new one from your email."
+            : "This reset link is invalid or has expired.",
+        );
+        setStatus("error");
+        return;
+      }
 
       const hash = window.location.hash.startsWith("#")
         ? window.location.hash.slice(1)
@@ -30,6 +39,7 @@ function RecoverForm() {
         const accessToken = params.get("access_token");
         const refreshToken = params.get("refresh_token");
         if (accessToken && refreshToken) {
+          const supabase = createClient();
           const { error: sessionError } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
@@ -47,32 +57,14 @@ function RecoverForm() {
 
       const tokenHash = searchParams.get("token_hash");
       const type = searchParams.get("type") ?? "recovery";
-      if (tokenHash) {
-        const { error: otpError } = await supabase.auth.verifyOtp({
-          token_hash: tokenHash,
-          type: type as "recovery",
-        });
-        if (!otpError) {
-          router.replace("/reset-password");
-          return;
-        }
-        setError(otpError.message);
-        setStatus("error");
-        return;
-      }
-
       const code = searchParams.get("code");
-      if (code) {
-        const { error: codeError } =
-          await supabase.auth.exchangeCodeForSession(code);
-        if (!codeError) {
-          router.replace("/reset-password");
-          return;
-        }
-        setError(
-          "This reset link could not be verified. Request a new link from the forgot-password page.",
-        );
-        setStatus("error");
+
+      if (tokenHash || code) {
+        const params = new URLSearchParams();
+        if (tokenHash) params.set("token_hash", tokenHash);
+        if (type) params.set("type", type);
+        if (code) params.set("code", code);
+        window.location.replace(`/auth/recover/confirm?${params.toString()}`);
         return;
       }
 

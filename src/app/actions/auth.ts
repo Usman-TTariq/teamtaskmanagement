@@ -39,6 +39,20 @@ async function getSiteUrl() {
   return process.env.NEXT_PUBLIC_SITE_URL ?? null;
 }
 
+function mapPasswordResetError(raw: string) {
+  const message = raw.toLowerCase();
+  if (message.includes("rate limit")) {
+    return "Too many reset emails sent. Wait about an hour, or ask Abdullah to generate a reset link from Settings.";
+  }
+  if (message.includes("security purposes") || message.includes("after")) {
+    return "Please wait 60 seconds before requesting another reset email.";
+  }
+  if (message.includes("redirect") || message.includes("url")) {
+    return "Reset link misconfigured. Ask admin to add the production callback URL in Supabase.";
+  }
+  return raw && raw !== "{}" ? raw : "Could not send reset email. Check Supabase SMTP settings and try again.";
+}
+
 export async function signInWithPassword(email: string, password: string) {
   const normalized = email.trim().toLowerCase();
   if (!normalized) {
@@ -102,25 +116,16 @@ export async function requestPasswordReset(email: string) {
     return { error: "App URL is not configured (NEXT_PUBLIC_SITE_URL)." };
   }
 
-  const admin = createAdminClient();
-  const { data, error } = await admin.auth.admin.generateLink({
-    type: "recovery",
-    email: normalized,
-    options: { redirectTo },
+  const supabase = await createClient();
+  const { error } = await supabase.auth.resetPasswordForEmail(normalized, {
+    redirectTo,
   });
 
-  const tokenHash = data?.properties?.hashed_token;
-  if (error || !tokenHash || !siteUrl) {
-    const message =
-      error?.message && error.message !== "{}"
-        ? error.message
-        : "Could not create reset link.";
-    return { error: message };
+  if (error) {
+    return { error: mapPasswordResetError(error.message ?? "") };
   }
 
-  const resetLink = buildPasswordRecoverLink(siteUrl, tokenHash);
-
-  return { success: true as const, email: normalized, resetLink };
+  return { success: true as const, email: normalized };
 }
 
 export async function generatePasswordResetLink(email: string) {
