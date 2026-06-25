@@ -549,6 +549,37 @@ export async function toggleTaskPinned(taskId: string) {
   return { success: true, pinned: !existing.pinned };
 }
 
+export async function deleteTask(taskId: string) {
+  const profile = await requireLead();
+  const supabase = await createClient();
+
+  const { data: existing } = await supabase
+    .from("tasks")
+    .select("id, title")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (!existing) {
+    return { error: "Task not found." };
+  }
+
+  await supabase.from("activity_log").insert({
+    task_id: taskId,
+    user_id: profile.id,
+    action_type: "task_deleted",
+    description: `Deleted "${existing.title}"`,
+  });
+
+  const { error } = await supabase.from("tasks").delete().eq("id", taskId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidateTaskPaths();
+  return { success: true as const };
+}
+
 export async function submitTaskForReview(taskId: string) {
   const profile = await requireProfile();
   const supabase = await createClient();

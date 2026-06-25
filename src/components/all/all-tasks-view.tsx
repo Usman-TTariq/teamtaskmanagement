@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Lock, Search } from "lucide-react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Lock, Search, Trash2 } from "lucide-react";
+import { deleteTask } from "@/app/actions/tasks";
 import { useTaskDetailOptional } from "@/components/tasks/task-detail-context";
 import { Avatar } from "@/components/ui/avatar";
 import { formatDeadlineLabel } from "@/lib/deadline-label";
@@ -31,6 +33,7 @@ type Props = {
 };
 
 export function AllTasksView({ tasks, brands, members }: Props) {
+  const router = useRouter();
   const taskDetail = useTaskDetailOptional();
   const [search, setSearch] = useState("");
   const [assigneeId, setAssigneeId] = useState("anyone");
@@ -39,6 +42,9 @@ export function AllTasksView({ tasks, brands, members }: Props) {
   const [status, setStatus] = useState("any");
   const [priority, setPriority] = useState("any");
   const [assignedOn, setAssignedOn] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [pending, startTransition] = useTransition();
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -58,6 +64,25 @@ export function AllTasksView({ tasks, brands, members }: Props) {
       return true;
     });
   }, [tasks, search, assigneeId, brandId, category, status, priority, assignedOn]);
+
+  function handleDelete(taskId: string, title: string) {
+    const confirmed = window.confirm(
+      `Delete "${title}"? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setDeleteError("");
+    setDeletingId(taskId);
+    startTransition(async () => {
+      const result = await deleteTask(taskId);
+      setDeletingId(null);
+      if (result.error) {
+        setDeleteError(result.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -153,15 +178,19 @@ export function AllTasksView({ tasks, brands, members }: Props) {
         </div>
       </div>
 
+      {deleteError && (
+        <p className="text-xs font-medium text-[#E11D2A]">{deleteError}</p>
+      )}
+
       <div className="overflow-hidden rounded-2xl border border-[#E4E6EF] bg-white shadow-[0_1px_2px_rgba(20,20,40,.04)]">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px] border-collapse">
             <thead>
               <tr className="border-b border-[#E4E6EF] bg-[#FAFBFD]">
-                {["Task", "Brand", "Type", "Assignee", "Status", "Deadline"].map(
+                {["Task", "Brand", "Type", "Assignee", "Status", "Deadline", ""].map(
                   (label) => (
                     <th
-                      key={label}
+                      key={label || "actions"}
                       className="px-4 py-3 text-left text-[11px] font-extrabold uppercase tracking-[0.08em] text-[#9495A3]"
                     >
                       {label}
@@ -240,6 +269,20 @@ export function AllTasksView({ tasks, brands, members }: Props) {
                           —
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3.5">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleDelete(task.id, task.title);
+                        }}
+                        disabled={pending && deletingId === task.id}
+                        className="grid h-8 w-8 place-items-center rounded-lg text-[#9495A3] transition hover:bg-[#FDE7EA] hover:text-[#E11D2A] disabled:opacity-50"
+                        aria-label={`Delete ${task.title}`}
+                      >
+                        <Trash2 size={15} strokeWidth={2.2} />
+                      </button>
                     </td>
                   </tr>
                 );
