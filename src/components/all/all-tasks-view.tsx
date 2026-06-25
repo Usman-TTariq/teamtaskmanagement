@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Lock, Search, Trash2 } from "lucide-react";
 import { deleteTask } from "@/app/actions/tasks";
 import { useTaskDetailOptional } from "@/components/tasks/task-detail-context";
@@ -33,8 +32,8 @@ type Props = {
 };
 
 export function AllTasksView({ tasks, brands, members }: Props) {
-  const router = useRouter();
   const taskDetail = useTaskDetailOptional();
+  const [localTasks, setLocalTasks] = useState(tasks);
   const [search, setSearch] = useState("");
   const [assigneeId, setAssigneeId] = useState("anyone");
   const [brandId, setBrandId] = useState("all");
@@ -42,14 +41,16 @@ export function AllTasksView({ tasks, brands, members }: Props) {
   const [status, setStatus] = useState("any");
   const [priority, setPriority] = useState("any");
   const [assignedOn, setAssignedOn] = useState("");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState("");
-  const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    setLocalTasks(tasks);
+  }, [tasks]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return tasks.filter((task) => {
+    return localTasks.filter((task) => {
       if (query && !task.title.toLowerCase().includes(query)) return false;
       if (assigneeId !== "anyone" && task.assignee.id !== assigneeId) {
         return false;
@@ -63,7 +64,16 @@ export function AllTasksView({ tasks, brands, members }: Props) {
       }
       return true;
     });
-  }, [tasks, search, assigneeId, brandId, category, status, priority, assignedOn]);
+  }, [
+    localTasks,
+    search,
+    assigneeId,
+    brandId,
+    category,
+    status,
+    priority,
+    assignedOn,
+  ]);
 
   function handleDelete(taskId: string, title: string) {
     const confirmed = window.confirm(
@@ -72,15 +82,14 @@ export function AllTasksView({ tasks, brands, members }: Props) {
     if (!confirmed) return;
 
     setDeleteError("");
-    setDeletingId(taskId);
-    startTransition(async () => {
-      const result = await deleteTask(taskId);
-      setDeletingId(null);
+    const previous = localTasks;
+    setLocalTasks((current) => current.filter((task) => task.id !== taskId));
+
+    void deleteTask(taskId).then((result) => {
       if (result.error) {
+        setLocalTasks(previous);
         setDeleteError(result.error);
-        return;
       }
-      router.refresh();
     });
   }
 
@@ -277,8 +286,7 @@ export function AllTasksView({ tasks, brands, members }: Props) {
                           event.stopPropagation();
                           handleDelete(task.id, task.title);
                         }}
-                        disabled={pending && deletingId === task.id}
-                        className="grid h-8 w-8 place-items-center rounded-lg text-[#9495A3] transition hover:bg-[#FDE7EA] hover:text-[#E11D2A] disabled:opacity-50"
+                        className="grid h-8 w-8 place-items-center rounded-lg text-[#9495A3] transition hover:bg-[#FDE7EA] hover:text-[#E11D2A]"
                         aria-label={`Delete ${task.title}`}
                       >
                         <Trash2 size={15} strokeWidth={2.2} />
@@ -294,7 +302,7 @@ export function AllTasksView({ tasks, brands, members }: Props) {
         {filtered.length === 0 && (
           <div className="px-4 py-14 text-center">
             <p className="text-sm font-semibold text-[#6B6C7A]">
-              {tasks.length === 0
+              {localTasks.length === 0
                 ? "No tasks yet. Create one with + New task."
                 : "No tasks match your filters."}
             </p>
@@ -303,7 +311,7 @@ export function AllTasksView({ tasks, brands, members }: Props) {
       </div>
 
       <p className="text-xs font-semibold text-[#9495A3]">
-        Showing {filtered.length} of {tasks.length} tasks
+        Showing {filtered.length} of {localTasks.length} tasks
       </p>
     </div>
   );

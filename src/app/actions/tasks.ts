@@ -550,25 +550,8 @@ export async function toggleTaskPinned(taskId: string) {
 }
 
 export async function deleteTask(taskId: string) {
-  const profile = await requireLead();
+  await requireLead();
   const supabase = await createClient();
-
-  const { data: existing } = await supabase
-    .from("tasks")
-    .select("id, title")
-    .eq("id", taskId)
-    .maybeSingle();
-
-  if (!existing) {
-    return { error: "Task not found." };
-  }
-
-  await supabase.from("activity_log").insert({
-    task_id: taskId,
-    user_id: profile.id,
-    action_type: "task_deleted",
-    description: `Deleted "${existing.title}"`,
-  });
 
   const { error } = await supabase.from("tasks").delete().eq("id", taskId);
 
@@ -576,7 +559,9 @@ export async function deleteTask(taskId: string) {
     return { error: error.message };
   }
 
-  revalidateTaskPaths();
+  revalidatePath("/all");
+  revalidatePath("/board");
+  revalidatePath("/");
   return { success: true as const };
 }
 
