@@ -14,14 +14,18 @@ import {
   ClipboardList,
   MessageSquare,
   Mic,
+  Send,
   X,
 } from "lucide-react";
+import { addTaskComment } from "@/app/actions/tasks";
 import {
   getRecentNotifications,
   markAllNotificationsRead,
   markNotificationRead,
 } from "@/app/actions/notifications";
 import { useTaskDetailOptional } from "@/components/tasks/task-detail-context";
+import { Avatar } from "@/components/ui/avatar";
+import { BrandMark } from "@/components/ui/brand-logo";
 import { createClient } from "@/lib/supabase/client";
 import type { AppNotification } from "@/lib/types";
 
@@ -76,6 +80,175 @@ function formatNotificationTime(iso: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+type ParsedNotification = {
+  senderName: string | null;
+  preview: string;
+  supportsReply: boolean;
+};
+
+function parseNotificationContent(message: string): ParsedNotification {
+  const assignedMatch = message.match(/^(.+?) assigned you "(.+)"$/);
+  if (assignedMatch) {
+    return {
+      senderName: assignedMatch[1],
+      preview: `Assigned you “${assignedMatch[2]}”`,
+      supportsReply: false,
+    };
+  }
+
+  const commentMatch = message.match(/^(.+?) commented on "(.+)"(?: under review)?$/);
+  if (commentMatch) {
+    return {
+      senderName: commentMatch[1],
+      preview: commentMatch[2],
+      supportsReply: true,
+    };
+  }
+
+  const voiceMatch = message.match(/^(.+?) sent a voice note on "(.+)"(?: under review)?$/);
+  if (voiceMatch) {
+    return {
+      senderName: voiceMatch[1],
+      preview: `Voice note on “${voiceMatch[2]}”`,
+      supportsReply: true,
+    };
+  }
+
+  const submitMatch = message.match(/^(.+?) submitted "(.+)" for your review$/);
+  if (submitMatch) {
+    return {
+      senderName: submitMatch[1],
+      preview: `Submitted “${submitMatch[2]}” for review`,
+      supportsReply: false,
+    };
+  }
+
+  const approvedMatch = message.match(/^Your task "(.+)" was approved$/);
+  if (approvedMatch) {
+    return {
+      senderName: null,
+      preview: `“${approvedMatch[1]}” was approved`,
+      supportsReply: false,
+    };
+  }
+
+  return {
+    senderName: null,
+    preview: message,
+    supportsReply: false,
+  };
+}
+
+type NotificationToastCardProps = {
+  toast: ToastItem;
+  onDismiss: () => void;
+  onOpen: () => void;
+  onMarkRead: () => void;
+};
+
+function NotificationToastCard({
+  toast,
+  onDismiss,
+  onOpen,
+  onMarkRead,
+}: NotificationToastCardProps) {
+  const parsed = parseNotificationContent(toast.message);
+  const [reply, setReply] = useState("");
+  const [sending, setSending] = useState(false);
+  const displayName = parsed.senderName ?? "Team Tasks";
+  const showQuickReply = parsed.supportsReply && Boolean(toast.task_id);
+
+  async function handleQuickReply() {
+    const text = reply.trim();
+    if (!text || !toast.task_id || sending) return;
+
+    setSending(true);
+    const result = await addTaskComment(toast.task_id, text);
+    setSending(false);
+
+    if (result.error) {
+      window.dispatchEvent(
+        new CustomEvent("app:toast", {
+          detail: { message: result.error, variant: "error" },
+        }),
+      );
+      return;
+    }
+
+    onMarkRead();
+    onDismiss();
+  }
+
+  return (
+    <div className="pointer-events-auto animate-[slideInUp_.35s_ease-out] overflow-hidden rounded-xl border border-[#2A2A36] bg-white shadow-[0_16px_48px_rgba(0,0,0,.35)]">
+      <div className="flex items-center justify-between bg-gradient-to-r from-[#101019] to-[#1A1320] px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <BrandMark size={20} />
+          <span className="truncate text-xs font-bold text-white">Team Tasks</span>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/70 transition hover:bg-white/10 hover:text-white"
+          aria-label="Close notification"
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full gap-3 px-3 py-3 text-left transition hover:bg-[#FAFBFD]"
+      >
+        {parsed.senderName ? (
+          <Avatar name={parsed.senderName} size={40} />
+        ) : (
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] text-white">
+            <CheckCircle2 size={18} />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-extrabold text-[#14141A]">{displayName}</p>
+          <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-[#6B6C7A]">
+            {parsed.preview}
+          </p>
+        </div>
+      </button>
+
+      {showQuickReply && (
+        <div className="border-t border-[#EEF1F6] bg-[#F4F5FA] px-3 py-2.5">
+          <div className="flex items-center gap-2 rounded-lg border border-[#E4E6EF] bg-white px-3 py-2">
+            <input
+              type="text"
+              value={reply}
+              onChange={(event) => setReply(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void handleQuickReply();
+                }
+              }}
+              placeholder="Send a quick reply"
+              disabled={sending}
+              className="min-w-0 flex-1 bg-transparent text-sm text-[#14141A] outline-none placeholder:text-[#9495A3] disabled:opacity-60"
+            />
+            <button
+              type="button"
+              onClick={() => void handleQuickReply()}
+              disabled={!reply.trim() || sending}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[#E11D2A] transition hover:bg-[#FFF5F6] disabled:opacity-40"
+              aria-label="Send reply"
+            >
+              <Send size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 type Props = {
   profileId: string;
   initialUnreadCount: number;
@@ -117,12 +290,12 @@ export function NotificationProvider({
         if (current.some((item) => item.id === notification.id)) {
           return current;
         }
-        return [{ ...notification, visible: true }, ...current].slice(0, 4);
+        return [...current, { ...notification, visible: true }].slice(-4);
       });
 
       const timer = window.setTimeout(() => {
         dismissToast(notification.id);
-      }, 7000);
+      }, 12000);
       dismissTimersRef.current.set(notification.id, timer);
     },
     [dismissToast],
@@ -163,6 +336,13 @@ export function NotificationProvider({
       if (!initializedRef.current) {
         items.forEach((item) => knownIdsRef.current.add(item.id));
         initializedRef.current = true;
+
+        if (showPopups) {
+          for (const item of items.filter((entry) => !entry.read).slice(0, 3)) {
+            pushToast(item);
+          }
+        }
+
         return items;
       }
 
@@ -209,7 +389,7 @@ export function NotificationProvider({
     }
 
     void poll();
-    const interval = window.setInterval(poll, 20000);
+    const interval = window.setInterval(poll, 8000);
 
     return () => {
       cancelled = true;
@@ -300,78 +480,41 @@ export function NotificationProvider({
       {children}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed bottom-6 right-6 z-[80] flex w-[min(100vw-2rem,380px)] flex-col gap-3"
+        className="pointer-events-none fixed bottom-4 right-4 z-[80] flex w-[min(100vw-2rem,400px)] flex-col gap-2"
       >
-        {toasts.map((toast) => {
-          const Icon = notificationIcon(toast.message);
-          return (
-            <div
-              key={toast.id}
-              className="pointer-events-auto animate-[slideInRight_.35s_ease-out] overflow-hidden rounded-2xl border border-[#E4E6EF] bg-white shadow-[0_12px_40px_rgba(20,20,40,.16)]"
-            >
-              <div className="flex gap-3 p-4">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#FF5A72] to-[#E11D2A] text-white">
-                  <Icon size={18} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#9495A3]">
-                    New notification
-                  </p>
-                  <p className="mt-1 text-sm font-semibold leading-snug text-[#14141A]">
-                    {toast.message}
-                  </p>
-                  <div className="mt-3 flex items-center gap-2">
-                    {toast.task_id && (
-                      <button
-                        type="button"
-                        onClick={() => void openNotification(toast)}
-                        className="rounded-lg bg-[#14141A] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2A2A36]"
-                      >
-                        View task
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        dismissToast(toast.id);
-                        if (!toast.read) {
-                          void markNotificationRead(toast.id);
-                          setUnreadCount((count) => Math.max(0, count - 1));
-                          setNotifications((current) =>
-                            current.map((item) =>
-                              item.id === toast.id ? { ...item, read: true } : item,
-                            ),
-                          );
-                        }
-                      }}
-                      className="rounded-lg border border-[#E4E6EF] px-3 py-1.5 text-xs font-bold text-[#6B6C7A] transition hover:bg-[#F4F5FA]"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => dismissToast(toast.id)}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[#9495A3] transition hover:bg-[#F4F5FA] hover:text-[#14141A]"
-                  aria-label="Close notification"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-          );
-        })}
+        {toasts.map((toast) => (
+          <NotificationToastCard
+            key={toast.id}
+            toast={toast}
+            onDismiss={() => dismissToast(toast.id)}
+            onOpen={() => void openNotification(toast)}
+            onMarkRead={() => {
+              if (!toast.read) {
+                void markNotificationRead(toast.id);
+                setUnreadCount((count) => Math.max(0, count - 1));
+                setNotifications((current) =>
+                  current.map((item) =>
+                    item.id === toast.id ? { ...item, read: true } : item,
+                  ),
+                );
+              }
+            }}
+          />
+        ))}
         {appToasts.map((toast) => (
           <div
             key={toast.id}
-            className={`pointer-events-auto animate-[slideInRight_.35s_ease-out] overflow-hidden rounded-2xl border bg-white shadow-[0_12px_40px_rgba(20,20,40,.16)] ${
+            className={`pointer-events-auto animate-[slideInUp_.35s_ease-out] overflow-hidden rounded-xl border shadow-[0_16px_48px_rgba(0,0,0,.35)] ${
               toast.variant === "error"
                 ? "border-[#FECACA] bg-[#FFF5F6]"
-                : "border-[#E4E6EF]"
+                : "border-[#2A2A36] bg-white"
             }`}
           >
-            <div className="flex items-start gap-3 p-4">
+            <div className="flex items-center gap-2 bg-gradient-to-r from-[#101019] to-[#1A1320] px-3 py-2">
+              <BrandMark size={20} />
+              <span className="text-xs font-bold text-white">Team Tasks</span>
+            </div>
+            <div className="flex items-start gap-3 px-3 py-3">
               <p
                 className={`min-w-0 flex-1 text-sm font-semibold leading-snug ${
                   toast.variant === "error" ? "text-[#E11D2A]" : "text-[#14141A]"
@@ -384,7 +527,7 @@ export function NotificationProvider({
                 onClick={() =>
                   setAppToasts((current) => current.filter((item) => item.id !== toast.id))
                 }
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[#9495A3] transition hover:bg-[#F4F5FA] hover:text-[#14141A]"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[#9495A3] transition hover:bg-[#F4F5FA] hover:text-[#14141A]"
                 aria-label="Close message"
               >
                 <X size={14} />
