@@ -1,3 +1,4 @@
+import { getRedirectOrigin } from "@/lib/auth-redirect";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -12,21 +13,6 @@ function resolveRedirectPath(type: string | null, next: string | null) {
   return "/";
 }
 
-function getRedirectOrigin(request: NextRequest) {
-  const forwardedHost = request.headers.get("x-forwarded-host");
-  const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
-
-  if (
-    forwardedHost &&
-    !forwardedHost.startsWith("localhost") &&
-    !forwardedHost.startsWith("127.0.0.1")
-  ) {
-    return `${forwardedProto}://${forwardedHost.split(",")[0]?.trim()}`;
-  }
-
-  return request.nextUrl.origin;
-}
-
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
@@ -37,6 +23,15 @@ export async function GET(request: NextRequest) {
   const errorDescription = searchParams.get("error_description");
 
   const origin = getRedirectOrigin(request);
+
+  if (type === "recovery" || next === "/reset-password") {
+    const recoverUrl = new URL("/auth/recover", origin);
+    if (code) recoverUrl.searchParams.set("code", code);
+    if (token_hash) recoverUrl.searchParams.set("token_hash", token_hash);
+    if (type) recoverUrl.searchParams.set("type", type);
+    return NextResponse.redirect(recoverUrl);
+  }
+
   const redirectPath = resolveRedirectPath(type, next);
 
   if (error) {

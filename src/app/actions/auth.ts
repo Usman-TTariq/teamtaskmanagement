@@ -5,6 +5,10 @@ import { redirect } from "next/navigation";
 import { ensureAuthUser } from "@/lib/team-profiles";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import {
+  buildPasswordRecoverLink,
+  passwordRecoverRedirectUrl,
+} from "@/lib/auth-redirect";
 
 const ALLOWLIST_ERROR =
   "We couldn't find an account for that email. Ask Abdullah to add you.";
@@ -33,17 +37,6 @@ async function getSiteUrl() {
   }
 
   return process.env.NEXT_PUBLIC_SITE_URL ?? null;
-}
-
-function authCallbackUrl(siteUrl: string | null, next?: string) {
-  if (!siteUrl) return null;
-
-  const params = new URLSearchParams();
-  if (next) params.set("next", next);
-  const query = params.toString();
-  return query
-    ? `${siteUrl}/auth/callback?${query}`
-    : `${siteUrl}/auth/callback`;
 }
 
 function mapPasswordResetError(raw: string) {
@@ -118,7 +111,7 @@ export async function requestPasswordReset(email: string) {
   }
 
   const siteUrl = await getSiteUrl();
-  const redirectTo = authCallbackUrl(siteUrl, "/reset-password");
+  const redirectTo = siteUrl ? passwordRecoverRedirectUrl(siteUrl) : null;
   if (!redirectTo) {
     return { error: "App URL is not configured (NEXT_PUBLIC_SITE_URL)." };
   }
@@ -159,7 +152,7 @@ export async function generatePasswordResetLink(email: string) {
   }
 
   const siteUrl = await getSiteUrl();
-  const redirectTo = authCallbackUrl(siteUrl, "/reset-password");
+  const redirectTo = siteUrl ? passwordRecoverRedirectUrl(siteUrl) : null;
   if (!redirectTo) {
     return { error: "App URL is not configured (NEXT_PUBLIC_SITE_URL)." };
   }
@@ -171,7 +164,8 @@ export async function generatePasswordResetLink(email: string) {
     options: { redirectTo },
   });
 
-  if (error || !data?.properties?.action_link) {
+  const tokenHash = data?.properties?.hashed_token;
+  if (error || !tokenHash || !siteUrl) {
     const message =
       error?.message && error.message !== "{}"
         ? error.message
@@ -182,7 +176,7 @@ export async function generatePasswordResetLink(email: string) {
   return {
     success: true as const,
     email: normalized,
-    link: data.properties.action_link,
+    link: buildPasswordRecoverLink(siteUrl, tokenHash),
   };
 }
 

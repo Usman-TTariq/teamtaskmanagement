@@ -39,14 +39,18 @@ export function ResetPasswordGate({ children }: Props) {
         }
       }
 
+      const tokenHash = searchParams.get("token_hash");
+      const type = searchParams.get("type");
+      if (tokenHash) {
+        const params = new URLSearchParams({ token_hash: tokenHash, type: type ?? "recovery" });
+        router.replace(`/auth/recover?${params.toString()}`);
+        return;
+      }
+
       const code = searchParams.get("code");
       if (code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
-        if (!error) {
-          router.replace("/reset-password");
-          if (!cancelled) setReady(true);
-          return;
-        }
+        router.replace(`/auth/recover?code=${encodeURIComponent(code)}&type=recovery`);
+        return;
       }
 
       const {
