@@ -577,7 +577,7 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
   }
 
   const isAssignee = existing.assignee_id === profile.id;
-  const isLead = canAssign(profile.role);
+  const isLead = canAssign(profile);
 
   if (!isAssignee && !isLead) {
     return { error: "You cannot update this task." };
@@ -629,7 +629,7 @@ export async function toggleTaskPinned(taskId: string) {
     return { error: "Task not found." };
   }
 
-  if (existing.assignee_id !== profile.id && !canAssign(profile.role)) {
+  if (existing.assignee_id !== profile.id && !canAssign(profile)) {
     return { error: "You cannot pin this task." };
   }
 

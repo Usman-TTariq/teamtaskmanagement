@@ -6,6 +6,7 @@ export type Profile = {
   email: string;
   role: UserRole;
   is_active: boolean;
+  can_assign_tasks: boolean;
 };
 
 export type Brand = {
@@ -38,6 +39,7 @@ export type AllowedEmail = {
   email: string;
   name: string;
   role: UserRole;
+  can_assign_tasks: boolean;
 };
 
 export type TeamMemberWorkload = {

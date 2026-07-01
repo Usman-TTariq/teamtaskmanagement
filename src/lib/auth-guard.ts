@@ -10,7 +10,7 @@ export async function requireProfile() {
 
 export async function requireLead() {
   const profile = await requireProfile();
-  if (!canAssign(profile.role)) redirect("/mine");
+  if (!canAssign(profile)) redirect("/mine");
   return profile;
 }
 

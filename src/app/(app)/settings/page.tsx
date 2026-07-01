@@ -16,7 +16,7 @@ export default async function SettingsPage() {
     const supabase = await createClient();
     const { data } = await supabase
       .from("allowed_emails")
-      .select("email, name, role")
+      .select("email, name, role, can_assign_tasks")
       .order("email");
     allowedEmails = (data ?? []) as AllowedEmail[];
   }

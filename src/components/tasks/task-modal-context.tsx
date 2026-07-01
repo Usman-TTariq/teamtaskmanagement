@@ -56,7 +56,7 @@ export function TaskModalProvider({
     setPresetAssigneeId(undefined);
   }, []);
 
-  const canCreate = canAssign(profile.role);
+  const canCreate = canAssign(profile);
 
   return (
     <TaskModalContext.Provider value={{ openCreateTask }}>

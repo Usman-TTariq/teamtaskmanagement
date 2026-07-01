@@ -129,7 +129,7 @@ export async function getTeamProfiles(): Promise<Profile[]> {
     admin.from("allowed_emails").select("email").order("email"),
     admin
       .from("profiles")
-      .select("id, name, email, role, is_active")
+      .select("id, name, email, role, is_active, can_assign_tasks")
       .eq("is_active", true)
       .order("name"),
   ]);

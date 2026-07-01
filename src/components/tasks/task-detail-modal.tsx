@@ -67,7 +67,7 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
   const [pendingVoice, setPendingVoice] = useState<File | null>(null);
   const [pendingVoiceUrl, setPendingVoiceUrl] = useState<string | null>(null);
 
-  const isLead = canAssign(profile.role);
+  const isLead = canAssign(profile);
   const isAssignee = task?.assignee_id === profile.id;
   const isReviewer =
     task?.status === "Under Review" && task.reviewer_id === profile.id;

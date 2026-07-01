@@ -40,7 +40,7 @@ function HeaderActions({ profile }: { profile: Profile }) {
   return (
     <div className="flex items-center gap-3">
       <NotificationBell />
-      {canAssign(profile.role) && taskModal && (
+      {canAssign(profile) && taskModal && (
         <button
           type="button"
           onClick={() => taskModal.openCreateTask()}
@@ -56,7 +56,7 @@ function HeaderActions({ profile }: { profile: Profile }) {
 
 export function AppShell({ profile, children }: Props) {
   const pathname = usePathname();
-  const navItems = navItemsForRole(profile.role);
+  const navItems = navItemsForRole(profile);
 
   const activeKey =
     navItems.find((item) =>

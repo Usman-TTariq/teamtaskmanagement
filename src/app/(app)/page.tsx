@@ -20,7 +20,7 @@ import { StatCard } from "@/components/ui/stat-card";
 
 export default async function DashboardPage() {
   const profile = await requireLead();
-  if (!canAssign(profile.role)) redirect("/mine");
+  if (!canAssign(profile)) redirect("/mine");
 
   const [reviewTasks, stats, boardTasks] = await Promise.all([
     getReviewQueue(),

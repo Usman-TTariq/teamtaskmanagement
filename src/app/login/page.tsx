@@ -7,7 +7,7 @@ export default async function LoginPage() {
   const supabase = await createClient();
   const { data: allowedEmails } = await supabase
     .from("allowed_emails")
-    .select("email, name, role")
+    .select("email, name, role, can_assign_tasks")
     .order("email");
 
   return <LockScreen allowedEmails={allowedEmails ?? []} />;

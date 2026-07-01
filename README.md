@@ -49,7 +49,7 @@ Tap a team email chip to fill the address, click **Send sign-in link**, then ope
 | yasal.khan@tgtnexus.net | Developer |
 | usman.tariq@tgtnexus.net | Developer |
 | hammad.noor@tgtnexus.net | Designer |
-| daniyal.naveed@tgtnexus.net | SEO |
+| daniyal.naveed@tgtnexus.net | SEO (can assign tasks) |
 
 ## Phases
 
