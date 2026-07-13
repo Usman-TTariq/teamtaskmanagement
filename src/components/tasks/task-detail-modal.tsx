@@ -155,6 +155,48 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
     );
   }
 
+  function handleStatusChange(status: TaskStatus) {
+    if (!task || status === task.status) return;
+    const previous = task.status;
+    // Show the new status instantly; sync with the server in the background.
+    setTask((current) => (current ? { ...current, status } : current));
+    setError("");
+    startTransition(async () => {
+      const result = await updateTaskStatus(taskId, status);
+      if (result.error) {
+        setTask((current) =>
+          current ? { ...current, status: previous } : current,
+        );
+        setError(result.error);
+        showToast(result.error, "error");
+        return;
+      }
+      showToast(`Moved to ${status}`, "success");
+      await fetchTask(true);
+      router.refresh();
+    });
+  }
+
+  function handleTogglePin() {
+    if (!task) return;
+    const previous = task.pinned;
+    setTask((current) =>
+      current ? { ...current, pinned: !previous } : current,
+    );
+    startTransition(async () => {
+      const result = await toggleTaskPinned(taskId);
+      if (result.error) {
+        setTask((current) =>
+          current ? { ...current, pinned: previous } : current,
+        );
+        showToast(result.error, "error");
+        return;
+      }
+      await fetchTask(true);
+      router.refresh();
+    });
+  }
+
   function handleSubmitForReview() {
     if (!task || submitting) return;
     setSubmitting(true);
@@ -507,9 +549,7 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                   value={task.status}
                   disabled={pending || isReviewer || (!isAssignee && !isLead)}
                   onChange={(e) =>
-                    refreshAfterAction(() =>
-                      updateTaskStatus(taskId, e.target.value as TaskStatus),
-                    )
+                    handleStatusChange(e.target.value as TaskStatus)
                   }
                   className="rounded-lg border border-[#E4E6EF] bg-white px-2.5 py-1.5 text-xs font-bold text-[#14141A] outline-none disabled:opacity-60"
                 >
@@ -522,7 +562,7 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                 <button
                   type="button"
                   disabled={pending || (!isAssignee && !isLead)}
-                  onClick={() => refreshAfterAction(() => toggleTaskPinned(taskId))}
+                  onClick={handleTogglePin}
                   className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition disabled:opacity-60 ${
                     task.pinned
                       ? "border-[#E11D2A] bg-[#FDE7EA] text-[#E11D2A]"

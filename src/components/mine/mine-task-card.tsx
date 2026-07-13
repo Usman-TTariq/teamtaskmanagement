@@ -15,9 +15,19 @@ const TONE_CLASS = {
 
 type Props = {
   task: BoardTask;
+  draggable?: boolean;
+  dragging?: boolean;
+  onDragStart?: (event: React.DragEvent) => void;
+  onDragEnd?: () => void;
 };
 
-export function MineTaskCard({ task }: Props) {
+export function MineTaskCard({
+  task,
+  draggable = false,
+  dragging = false,
+  onDragStart,
+  onDragEnd,
+}: Props) {
   const taskDetail = useTaskDetailOptional();
   const statusMeta = STATUS_META[task.status];
   const deadline = formatDeadlineLabel(task.deadline, task.status);
@@ -26,7 +36,12 @@ export function MineTaskCard({ task }: Props) {
     <button
       type="button"
       onClick={() => taskDetail?.openTaskDetail(task.id)}
-      className="group w-full border border-[#E4E6EF] bg-white text-left transition hover:border-[#14141A]/20 hover:bg-[#FAFBFD]"
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      className={`group w-full border border-[#E4E6EF] bg-white text-left transition hover:border-[#14141A]/20 hover:bg-[#FAFBFD] ${
+        draggable ? "cursor-grab active:cursor-grabbing" : ""
+      } ${dragging ? "opacity-40 grayscale" : ""}`}
     >
       <div className="flex min-h-[108px]">
         <div
