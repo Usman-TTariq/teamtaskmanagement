@@ -6,6 +6,7 @@ import {
   Calendar,
   ChevronRight,
   Download,
+  Loader2,
   Lock,
   MessageSquare,
   Mic,
@@ -65,6 +66,7 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [pendingVoice, setPendingVoice] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [pendingVoiceUrl, setPendingVoiceUrl] = useState<string | null>(null);
 
   const isLead = canAssign(profile);
@@ -142,6 +144,35 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
         return;
       }
       setError("");
+      await fetchTask(true);
+      router.refresh();
+    });
+  }
+
+  function showToast(message: string, variant: "success" | "error") {
+    window.dispatchEvent(
+      new CustomEvent("app:toast", { detail: { message, variant } }),
+    );
+  }
+
+  function handleSubmitForReview() {
+    if (!task || submitting) return;
+    setSubmitting(true);
+    setError("");
+    startTransition(async () => {
+      const result = await submitTaskForReview(taskId);
+      if (result.error) {
+        setSubmitting(false);
+        setError(result.error);
+        showToast(result.error, "error");
+        return;
+      }
+      // Reflect the new status immediately; full refetch happens in background.
+      setTask((current) =>
+        current ? { ...current, status: "Under Review" } : current,
+      );
+      setSubmitting(false);
+      showToast(`"${task.title}" submitted for review`, "success");
       await fetchTask(true);
       router.refresh();
     });
@@ -506,14 +537,21 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                   task.status !== "Done" && (
                     <button
                       type="button"
-                      disabled={pending}
-                      onClick={() =>
-                        refreshAfterAction(() => submitTaskForReview(taskId))
-                      }
+                      disabled={pending || submitting}
+                      onClick={handleSubmitForReview}
                       className="inline-flex items-center gap-1 rounded-lg bg-[#14141A] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
                     >
-                      Submit
-                      <ChevronRight size={13} />
+                      {submitting ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin" />
+                          Submitting…
+                        </>
+                      ) : (
+                        <>
+                          Submit
+                          <ChevronRight size={13} />
+                        </>
+                      )}
                     </button>
                   )}
               </div>

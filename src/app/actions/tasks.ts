@@ -688,43 +688,42 @@ export async function submitTaskForReview(taskId: string) {
   }
   const reviewerId = resolved.reviewer.id;
 
-  const { error: submissionError } = await supabase
-    .from("task_submissions")
-    .insert({
+  const [{ error: submissionError }, { error }] = await Promise.all([
+    supabase.from("task_submissions").insert({
       task_id: taskId,
       author_id: profile.id,
       comment: "",
       review_status: "pending",
-    });
+    }),
+    supabase
+      .from("tasks")
+      .update({
+        status: "Under Review",
+        reviewer_id: reviewerId,
+      })
+      .eq("id", taskId),
+  ]);
 
   if (submissionError) {
     return { error: submissionError.message };
   }
-
-  const { error } = await supabase
-    .from("tasks")
-    .update({
-      status: "Under Review",
-      reviewer_id: reviewerId,
-    })
-    .eq("id", taskId);
-
   if (error) {
     return { error: error.message };
   }
 
-  await notifyUser(
-    reviewerId,
-    taskId,
-    `${profile.name} submitted "${existing.title}" for your review`,
-  );
-
-  await supabase.from("activity_log").insert({
-    task_id: taskId,
-    user_id: profile.id,
-    action_type: "submitted",
-    description: `Submitted "${existing.title}" for review`,
-  });
+  await Promise.all([
+    notifyUser(
+      reviewerId,
+      taskId,
+      `${profile.name} submitted "${existing.title}" for your review`,
+    ),
+    supabase.from("activity_log").insert({
+      task_id: taskId,
+      user_id: profile.id,
+      action_type: "submitted",
+      description: `Submitted "${existing.title}" for review`,
+    }),
+  ]);
 
   revalidateTaskPaths();
   return { success: true };
