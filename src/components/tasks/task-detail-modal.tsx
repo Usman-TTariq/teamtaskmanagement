@@ -41,22 +41,42 @@ import {
 } from "@/lib/constants";
 import { canAssign } from "@/lib/permissions";
 import { formatAttachmentSize, MAX_ATTACHMENT_BYTES } from "@/lib/task-attachments";
-import type { Profile, TaskComment, TaskDetail } from "@/lib/types";
+import type { BoardTask, Profile, TaskComment, TaskDetail } from "@/lib/types";
 
 type Props = {
   taskId: string;
   profile: Profile;
+  preview?: BoardTask;
   onClose: () => void;
 };
 
-export function TaskDetailModal({ taskId, profile, onClose }: Props) {
+function previewToDetail(preview: BoardTask): TaskDetail {
+  return {
+    ...preview,
+    description: "",
+    assignee_id: preview.assignee.id,
+    created_by: "",
+    created_at: "",
+    reviewer_id: null,
+    reviewer: null,
+    pendingSubmissionId: null,
+    comments: [],
+    submissionCount: 0,
+    attachments: [],
+  };
+}
+
+export function TaskDetailModal({ taskId, profile, preview, onClose }: Props) {
   const router = useRouter();
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordTimerRef = useRef<number | null>(null);
   const voiceChunksRef = useRef<Blob[]>([]);
-  const [task, setTask] = useState<TaskDetail | null>(null);
+  // Open instantly with the card's data while full detail loads in the background.
+  const [task, setTask] = useState<TaskDetail | null>(() =>
+    preview ? previewToDetail(preview) : null,
+  );
   const [error, setError] = useState("");
   const [comment, setComment] = useState("");
   const [changeComment, setChangeComment] = useState("");
@@ -339,23 +359,25 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden />
       <div className="relative flex max-h-[min(92vh,820px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        {loading ? (
-          <div className="px-6 py-20 text-center text-sm font-semibold text-[#6B6C7A]">
-            Loading task…
-          </div>
-        ) : !task ? (
-          <div className="px-6 py-20 text-center">
-            <p className="text-sm font-semibold text-[#E11D2A]">
-              {error || "Task not found."}
-            </p>
-            <button
-              type="button"
-              onClick={onClose}
-              className="mt-4 text-sm font-bold text-[#6B6C7A]"
-            >
-              Close
-            </button>
-          </div>
+        {!task ? (
+          loading ? (
+            <div className="px-6 py-20 text-center text-sm font-semibold text-[#6B6C7A]">
+              Loading task…
+            </div>
+          ) : (
+            <div className="px-6 py-20 text-center">
+              <p className="text-sm font-semibold text-[#E11D2A]">
+                {error || "Task not found."}
+              </p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="mt-4 text-sm font-bold text-[#6B6C7A]"
+              >
+                Close
+              </button>
+            </div>
+          )
         ) : (
           <>
             {/* Header */}
@@ -609,6 +631,12 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                       {task.description}
                     </p>
                   </div>
+                ) : loading ? (
+                  <div className="space-y-2">
+                    <div className="h-3 w-2/3 animate-pulse rounded bg-[#EEF1F6]" />
+                    <div className="h-3 w-full animate-pulse rounded bg-[#EEF1F6]" />
+                    <div className="h-3 w-4/5 animate-pulse rounded bg-[#EEF1F6]" />
+                  </div>
                 ) : (
                   <p className="text-sm text-[#9495A3]">No brief provided.</p>
                 )}
@@ -693,12 +721,17 @@ export function TaskDetailModal({ taskId, profile, onClose }: Props) {
                     Comments
                   </h3>
                   <span className="text-xs font-bold text-[#9495A3]">
-                    ({task.comments.length})
+                    ({loading && task.comments.length === 0 ? "…" : task.comments.length})
                   </span>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-                  {task.comments.length === 0 ? (
+                  {task.comments.length === 0 && loading ? (
+                    <div className="space-y-2.5 py-1">
+                      <div className="h-14 animate-pulse rounded-xl bg-[#F4F5FA]" />
+                      <div className="h-14 animate-pulse rounded-xl bg-[#F4F5FA]" />
+                    </div>
+                  ) : task.comments.length === 0 ? (
                     <p className="py-6 text-center text-sm text-[#9495A3]">
                       No comments yet. Start the conversation below.
                     </p>

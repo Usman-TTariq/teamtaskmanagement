@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Check,
   Lock,
   Mic,
   Paperclip,
@@ -12,7 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { createTaskWithAttachments } from "@/app/actions/tasks";
+import { createBrand, createTaskWithAttachments } from "@/app/actions/tasks";
 import {
   CATEGORIES,
   COLORS,
@@ -40,9 +41,11 @@ const inputClass =
 
 const labelClass = "mb-1.5 block text-xs font-bold text-[#6B6C7A]";
 
+const ADD_BRAND_VALUE = "__add_new_brand__";
+
 export function CreateTaskModal({
   profile,
-  brands,
+  brands: initialBrands,
   members,
   presetAssigneeId,
   onClose,
@@ -50,7 +53,11 @@ export function CreateTaskModal({
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [brandId, setBrandId] = useState(brands[0]?.id ?? "");
+  const [brands, setBrands] = useState<Brand[]>(initialBrands);
+  const [brandId, setBrandId] = useState(initialBrands[0]?.id ?? "");
+  const [addingBrand, setAddingBrand] = useState(false);
+  const [newBrandName, setNewBrandName] = useState("");
+  const [savingBrand, setSavingBrand] = useState(false);
   const [category, setCategory] = useState<TaskCategory>("Development");
   const [assigneeId, setAssigneeId] = useState(
     presetAssigneeId ?? members[0]?.id ?? "",
@@ -132,6 +139,31 @@ export function CreateTaskModal({
 
   function removeAttachment(id: string) {
     setAttachments((current) => current.filter((item) => item.id !== id));
+  }
+
+  async function saveNewBrand() {
+    const name = newBrandName.trim();
+    if (!name || savingBrand) return;
+
+    setSavingBrand(true);
+    const result = await createBrand(name);
+    setSavingBrand(false);
+
+    if (result.error || !result.brand) {
+      setError(result.error ?? "Could not add brand.");
+      return;
+    }
+
+    const brand = result.brand;
+    setBrands((current) =>
+      current.some((item) => item.id === brand.id)
+        ? current
+        : [...current, brand].sort((a, b) => a.name.localeCompare(b.name)),
+    );
+    setBrandId(brand.id);
+    setAddingBrand(false);
+    setNewBrandName("");
+    setError("");
   }
 
   async function startRecording() {
@@ -318,17 +350,69 @@ export function CreateTaskModal({
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className={labelClass}>Brand</label>
-                <select
-                  value={brandId}
-                  onChange={(e) => setBrandId(e.target.value)}
-                  className={inputClass}
-                >
-                  {brands.map((brand) => (
-                    <option key={brand.id} value={brand.id}>
-                      {brand.name}
-                    </option>
-                  ))}
-                </select>
+                {addingBrand ? (
+                  <div className="flex gap-1.5">
+                    <input
+                      autoFocus
+                      value={newBrandName}
+                      onChange={(e) => setNewBrandName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void saveNewBrand();
+                        }
+                        if (e.key === "Escape") {
+                          e.stopPropagation();
+                          setAddingBrand(false);
+                          setNewBrandName("");
+                        }
+                      }}
+                      placeholder="New brand name"
+                      disabled={savingBrand}
+                      className={`${inputClass} min-w-0 flex-1`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void saveNewBrand()}
+                      disabled={savingBrand || !newBrandName.trim()}
+                      className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-xl bg-[#14141A] text-white disabled:opacity-50"
+                      aria-label="Save brand"
+                    >
+                      <Check size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingBrand(false);
+                        setNewBrandName("");
+                      }}
+                      disabled={savingBrand}
+                      className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-xl border border-[#E4E6EF] text-[#6B6C7A] hover:bg-[#F4F5FA]"
+                      aria-label="Cancel"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={brandId}
+                    onChange={(e) => {
+                      if (e.target.value === ADD_BRAND_VALUE) {
+                        setAddingBrand(true);
+                        return;
+                      }
+                      setBrandId(e.target.value);
+                    }}
+                    className={inputClass}
+                  >
+                    {brands.map((brand) => (
+                      <option key={brand.id} value={brand.id}>
+                        {brand.name}
+                      </option>
+                    ))}
+                    <option value={ADD_BRAND_VALUE}>+ Add new brand…</option>
+                  </select>
+                )}
               </div>
               <div>
                 <label className={labelClass}>Task type</label>

@@ -96,6 +96,41 @@ async function fetchTaskRows(supabase: Awaited<ReturnType<typeof createClient>>)
     .order("created_at", { ascending: false });
 }
 
+export async function createBrand(
+  name: string,
+): Promise<{ brand?: Brand; error?: string }> {
+  await requireLead();
+
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return { error: "Brand name is required." };
+  }
+
+  const admin = createAdminClient();
+
+  const { data: existing } = await admin
+    .from("brands")
+    .select("id, name")
+    .ilike("name", trimmed)
+    .maybeSingle();
+
+  if (existing) {
+    return { brand: existing };
+  }
+
+  const { data, error } = await admin
+    .from("brands")
+    .insert({ name: trimmed })
+    .select("id, name")
+    .single();
+
+  if (error || !data) {
+    return { error: error?.message ?? "Could not add brand." };
+  }
+
+  return { brand: data };
+}
+
 export type CreateTaskInput = {
   title: string;
   description: string;
@@ -447,13 +482,15 @@ async function getPendingSubmissionId(
 export async function getTaskDetail(
   taskId: string,
 ): Promise<{ task: TaskDetail | null; error?: string }> {
-  await requireProfile();
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("tasks")
-    .select(
-      `
+  // The task query is RLS-protected, so it can run alongside the auth check.
+  const [, { data, error }] = await Promise.all([
+    requireProfile(),
+    supabase
+      .from("tasks")
+      .select(
+        `
       id, title, description, status, category, priority, deadline, hidden, pinned,
       assignee_id, created_by, created_at, reviewer_id,
       brand:brands(name),
@@ -464,13 +501,14 @@ export async function getTaskDetail(
         author:profiles(id, name, role)
       )
     `,
-    )
-    .eq("id", taskId)
-    .order("created_at", {
-      referencedTable: "task_comments",
-      ascending: true,
-    })
-    .maybeSingle();
+      )
+      .eq("id", taskId)
+      .order("created_at", {
+        referencedTable: "task_comments",
+        ascending: true,
+      })
+      .maybeSingle(),
+  ]);
 
   if (error) {
     return { task: null, error: error.message };
@@ -498,52 +536,60 @@ export async function getTaskDetail(
       getPendingSubmissionId(supabase, taskId),
     ]);
 
-  const attachments = await Promise.all(
-    (attachmentRows ?? []).map(async (row) => {
-      const kind = row.kind as "file" | "voice";
-      const mimeType =
-        kind === "voice" && !row.mime_type.startsWith("audio/")
-          ? "audio/webm"
-          : row.mime_type;
+  // Sign every storage path in one round trip instead of one call per file.
+  const commentRows = data.comments ?? [];
+  const storagePaths = [
+    ...(attachmentRows ?? []).map((row) => row.file_path),
+    ...commentRows
+      .filter((row) => row.kind === "voice" && row.voice_path)
+      .map((row) => row.voice_path as string),
+  ];
 
-      const { data: playback } = await supabase.storage
-        .from(TASK_ATTACHMENTS_BUCKET)
-        .createSignedUrl(row.file_path, 3600);
-
-      let downloadUrl: string | null = null;
-      if (kind === "file") {
-        const { data: download } = await supabase.storage
-          .from(TASK_ATTACHMENTS_BUCKET)
-          .createSignedUrl(row.file_path, 3600, {
-            download: row.file_name,
-          });
-        downloadUrl = download?.signedUrl ?? null;
+  const signedUrlByPath = new Map<string, string>();
+  if (storagePaths.length > 0) {
+    const { data: signed } = await supabase.storage
+      .from(TASK_ATTACHMENTS_BUCKET)
+      .createSignedUrls(storagePaths, 3600);
+    for (const item of signed ?? []) {
+      if (item.path && item.signedUrl) {
+        signedUrlByPath.set(item.path, item.signedUrl);
       }
+    }
+  }
 
-      return {
-        id: row.id,
-        file_name: row.file_name,
-        kind,
-        mime_type: mimeType,
-        size_bytes: row.size_bytes,
-        url: playback?.signedUrl ?? null,
-        downloadUrl,
-      };
-    }),
-  );
+  const attachments = (attachmentRows ?? []).map((row) => {
+    const kind = row.kind as "file" | "voice";
+    const mimeType =
+      kind === "voice" && !row.mime_type.startsWith("audio/")
+        ? "audio/webm"
+        : row.mime_type;
 
-  const comments = await Promise.all(
-    (data.comments ?? []).map(async (row) => {
-      let voiceUrl: string | null = null;
-      if (row.kind === "voice" && row.voice_path) {
-        const { data: playback } = await supabase.storage
-          .from(TASK_ATTACHMENTS_BUCKET)
-          .createSignedUrl(row.voice_path, 3600);
-        voiceUrl = playback?.signedUrl ?? null;
-      }
+    const signedUrl = signedUrlByPath.get(row.file_path) ?? null;
+    const downloadUrl =
+      kind === "file" && signedUrl
+        ? `${signedUrl}&download=${encodeURIComponent(row.file_name)}`
+        : null;
+
+    return {
+      id: row.id,
+      file_name: row.file_name,
+      kind,
+      mime_type: mimeType,
+      size_bytes: row.size_bytes,
+      url: signedUrl,
+      downloadUrl,
+    };
+  });
+
+  const comments = commentRows
+    .map((row) => {
+      const voiceUrl =
+        row.kind === "voice" && row.voice_path
+          ? (signedUrlByPath.get(row.voice_path) ?? null)
+          : null;
       return mapComment(row, voiceUrl);
-    }),
-  ).then((rows) => rows.filter((c): c is TaskComment => c != null));
+    })
+    .filter((c): c is TaskComment => c != null);
 
   return {
     task: {

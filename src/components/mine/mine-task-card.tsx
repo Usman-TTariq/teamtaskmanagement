@@ -35,7 +35,7 @@ export function MineTaskCard({
   return (
     <button
       type="button"
-      onClick={() => taskDetail?.openTaskDetail(task.id)}
+      onClick={() => taskDetail?.openTaskDetail(task.id, task)}
       draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}

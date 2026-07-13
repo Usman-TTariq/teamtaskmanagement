@@ -26,7 +26,7 @@ export function BoardTaskCard({ task }: Props) {
   return (
     <button
       type="button"
-      onClick={() => taskDetail?.openTaskDetail(task.id)}
+      onClick={() => taskDetail?.openTaskDetail(task.id, task)}
       className="group w-full overflow-hidden rounded-xl border border-[#E4E6EF] bg-white text-left shadow-[0_1px_2px_rgba(20,20,40,.04)] transition hover:-translate-y-0.5 hover:border-[#D8DBE8] hover:shadow-[0_8px_20px_rgba(20,20,40,.08)]"
     >
       <div className="flex min-h-[112px]">

@@ -7,10 +7,10 @@ import {
   useState,
 } from "react";
 import { TaskDetailModal } from "@/components/tasks/task-detail-modal";
-import type { Profile } from "@/lib/types";
+import type { BoardTask, Profile } from "@/lib/types";
 
 type TaskDetailContextValue = {
-  openTaskDetail: (taskId: string) => void;
+  openTaskDetail: (taskId: string, preview?: BoardTask) => void;
 };
 
 const TaskDetailContext = createContext<TaskDetailContextValue | null>(null);
@@ -33,22 +33,27 @@ type Props = {
 };
 
 export function TaskDetailProvider({ profile, children }: Props) {
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const [openTask, setOpenTask] = useState<{
+    id: string;
+    preview?: BoardTask;
+  } | null>(null);
 
-  const openTaskDetail = useCallback((id: string) => {
-    setTaskId(id);
+  const openTaskDetail = useCallback((id: string, preview?: BoardTask) => {
+    setOpenTask({ id, preview });
   }, []);
 
   const close = useCallback(() => {
-    setTaskId(null);
+    setOpenTask(null);
   }, []);
 
   return (
     <TaskDetailContext.Provider value={{ openTaskDetail }}>
       {children}
-      {taskId && (
+      {openTask && (
         <TaskDetailModal
-          taskId={taskId}
+          key={openTask.id}
+          taskId={openTask.id}
+          preview={openTask.preview}
           profile={profile}
           onClose={close}
         />

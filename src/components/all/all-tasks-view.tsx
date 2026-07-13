@@ -219,7 +219,7 @@ export function AllTasksView({ tasks, brands, members }: Props) {
                 return (
                   <tr
                     key={task.id}
-                    onClick={() => taskDetail?.openTaskDetail(task.id)}
+                    onClick={() => taskDetail?.openTaskDetail(task.id, task)}
                     className="cursor-pointer border-b border-[#F0F1F6] transition last:border-b-0 hover:bg-[#FAFBFD]"
                   >
                     <td className="px-4 py-3.5">
